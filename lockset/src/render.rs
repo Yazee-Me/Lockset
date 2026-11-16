@@ -1,4 +1,4 @@
-use yzs_core::{Change, Plan};
+use lockset_core::{Change, Plan};
 
 pub fn plan(plan: &Plan, dry_run: bool) {
     for note in &plan.notes {

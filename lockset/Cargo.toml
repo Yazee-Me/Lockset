@@ -1,17 +1,17 @@
 [package]
-name = "yzs"
+name = "lockset"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Repository secrets with a small, boring surface"
 
 [[bin]]
-name = "yzs"
+name = "lockset"
 path = "src/main.rs"
 
 [dependencies]
-yzs-core = { path = "../yzs-core" }
-yzs-tools = { path = "../yzs-tools" }
+lockset-core = { path = "../lockset-core" }
+lockset-tools = { path = "../lockset-tools" }
 anyhow.workspace = true
 clap.workspace = true
 rpassword.workspace = true

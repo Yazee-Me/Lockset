@@ -1,5 +1,5 @@
 [package]
-name = "yzs-core"
+name = "lockset-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

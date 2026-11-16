@@ -2,7 +2,7 @@ use std::io::{IsTerminal, Read};
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use yzs_core::SecretKey;
+use lockset_core::SecretKey;
 use zeroize::Zeroizing;
 
 /// A dotenv value: hidden prompt by default, or stdin, or an environment

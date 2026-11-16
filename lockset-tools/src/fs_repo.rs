@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use yzs_core::{Error, PathId, Repo, Result};
+use lockset_core::{Error, PathId, Repo, Result};
 
 /// Payloads and `.sops.yaml` on the local filesystem. This is the only crate
 /// that knows paths are paths.
@@ -54,7 +54,7 @@ impl Repo for FsRepo {
                 .map_err(|e| Error::failed(format!("cannot create {}: {e}", parent.display())))?;
         }
         let tmp = path.with_file_name(format!(
-            ".{}.yzs-{}",
+            ".{}.lockset-{}",
             path.file_name().and_then(|n| n.to_str()).unwrap_or("tmp"),
             std::process::id()
         ));

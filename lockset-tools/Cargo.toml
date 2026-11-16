@@ -1,12 +1,12 @@
 [package]
-name = "yzs-tools"
+name = "lockset-tools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Tool and OS bindings for yzs: filesystem, sops, keychain"
+description = "Tool and OS bindings for Lockset: filesystem, sops, keychain"
 
 [dependencies]
-yzs-core = { path = "../yzs-core" }
+lockset-core = { path = "../lockset-core" }
 serde_json = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]

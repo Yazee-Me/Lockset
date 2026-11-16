@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["yzs-core", "yzs-tools", "yzs"]
+members = ["lockset-core", "lockset-tools", "lockset"]
 
 [workspace.package]
 version = "0.1.0"

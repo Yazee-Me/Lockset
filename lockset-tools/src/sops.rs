@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use yzs_core::{Codec, Error, PathId, Result, SecretKey};
+use lockset_core::{Codec, Error, PathId, Result, SecretKey};
 
 /// The sops CLI, wrapped. The key is handed over through the child
 /// environment only; it never reaches argv or a file.
@@ -14,7 +14,7 @@ impl SopsCodec {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
-            bin: std::env::var("YZS_SOPS").unwrap_or_else(|_| "sops".to_owned()),
+            bin: std::env::var("LOCKSET_SOPS").unwrap_or_else(|_| "sops".to_owned()),
         }
     }
 
@@ -99,7 +99,7 @@ impl Codec for SopsCodec {
         // Prove the value landed and that the rest of the file still opens.
         let plain = self.decrypt(id, key)?;
         let text = String::from_utf8_lossy(&plain);
-        let landed = yzs_core::dotenv::parse(&text)
+        let landed = lockset_core::dotenv::parse(&text)
             .iter()
             .any(|(n, v)| n == name && v == value);
         if !landed {

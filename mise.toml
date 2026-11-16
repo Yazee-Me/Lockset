@@ -17,8 +17,8 @@ run = "cargo build --release"
 
 [tasks.install]
 description = "Build the CLI and link it into ~/.local/bin"
-run = "cargo build --quiet --release && mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/target/release/yzs\" \"$HOME/.local/bin/yzs\" && echo \"linked $HOME/.local/bin/yzs\""
+run = "cargo build --quiet --release && mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/target/release/lockset\" \"$HOME/.local/bin/lockset\" && echo \"linked $HOME/.local/bin/lockset\""
 
 [tasks.run]
 description = "Run the CLI: mise run run -- status"
-run = "cargo run --quiet --release --bin yzs -- \"$@\""
+run = "cargo run --quiet --release --bin lockset -- \"$@\""

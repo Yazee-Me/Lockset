@@ -1342,6 +1342,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockset"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "lockset-core",
+ "lockset-tools",
+ "rpassword",
+ "zeroize",
+]
+
+[[package]]
+name = "lockset-core"
+version = "0.1.0"
+dependencies = [
+ "age",
+ "regex",
+ "secrecy",
+ "serde",
+ "serde_yaml_ng",
+ "thiserror 2.0.21",
+ "zeroize",
+]
+
+[[package]]
+name = "lockset-tools"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "lockset-core",
+ "serde_json",
+]
+
+[[package]]
 name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2472,40 +2506,6 @@ dependencies = [
  "rand_core",
  "serde",
  "zeroize",
-]
-
-[[package]]
-name = "yzs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "rpassword",
- "yzs-core",
- "yzs-tools",
- "zeroize",
-]
-
-[[package]]
-name = "yzs-core"
-version = "0.1.0"
-dependencies = [
- "age",
- "regex",
- "secrecy",
- "serde",
- "serde_yaml_ng",
- "thiserror 2.0.21",
- "zeroize",
-]
-
-[[package]]
-name = "yzs-tools"
-version = "0.1.0"
-dependencies = [
- "keyring",
- "serde_json",
- "yzs-core",
 ]
 
 [[package]]

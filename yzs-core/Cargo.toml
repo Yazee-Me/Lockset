@@ -1,0 +1,15 @@
+[package]
+name = "yzs-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tool- and OS-agnostic model for sops/age repository secrets"
+
+[dependencies]
+age.workspace = true
+secrecy.workspace = true
+zeroize.workspace = true
+serde.workspace = true
+serde_yaml_ng.workspace = true
+regex.workspace = true
+thiserror.workspace = true

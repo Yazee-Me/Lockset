@@ -1,0 +1,16 @@
+[package]
+name = "yzs-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tool and OS bindings for yzs: filesystem, sops, keychain"
+
+[dependencies]
+yzs-core = { path = "../yzs-core" }
+serde_json = "1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring.workspace = true

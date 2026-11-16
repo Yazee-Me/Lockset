@@ -1,0 +1,24 @@
+# Toolchain and tasks for Lockset. `mise install`, then `mise run test`.
+
+[tools]
+rust = "1.99.1"
+
+[tasks.default]
+description = "Gate: the workspace tests"
+depends = ["test"]
+
+[tasks.test]
+description = "Run the workspace tests (no network, no credentials)"
+run = "cargo test --workspace"
+
+[tasks.build]
+description = "Build the CLI (release)"
+run = "cargo build --release"
+
+[tasks.install]
+description = "Build the CLI and link it into ~/.local/bin"
+run = "cargo build --quiet --release && mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/target/release/yzs\" \"$HOME/.local/bin/yzs\" && echo \"linked $HOME/.local/bin/yzs\""
+
+[tasks.run]
+description = "Run the CLI: mise run run -- status"
+run = "cargo run --quiet --release --bin yzs -- \"$@\""

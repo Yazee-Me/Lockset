@@ -1,0 +1,18 @@
+[package]
+name = "yzs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Repository secrets with a small, boring surface"
+
+[[bin]]
+name = "yzs"
+path = "src/main.rs"
+
+[dependencies]
+yzs-core = { path = "../yzs-core" }
+yzs-tools = { path = "../yzs-tools" }
+anyhow.workspace = true
+clap.workspace = true
+rpassword.workspace = true
+zeroize.workspace = true

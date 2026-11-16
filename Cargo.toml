@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["yzs-core", "yzs-tools", "yzs"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+age = "0.12"
+secrecy = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml_ng = "0.10"
+regex = "1"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rpassword = "7"
+keyring = { version = "4", features = ["v1"] }

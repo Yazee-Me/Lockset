@@ -48,7 +48,7 @@ pub fn status(snapshot: &Snapshot) -> Report {
                 .unwrap_or_else(|| "unlabelled".into()),
             identity.custody
         )),
-        None => report.line("identity: none — run `yzs key import`"),
+        None => report.line("identity: none — run `lockset key import`"),
     }
 
     if let Some(identity) = &snapshot.identity {
@@ -117,7 +117,7 @@ pub fn status(snapshot: &Snapshot) -> Report {
     if empties == 0 {
         report.line("empty values: none");
     } else {
-        report.line(format!("empty values: {empties} (fill with `yzs set`)"));
+        report.line(format!("empty values: {empties} (fill with `lockset set`)"));
     }
 
     report.blank();
@@ -127,14 +127,14 @@ pub fn status(snapshot: &Snapshot) -> Report {
 
 fn next_step(snapshot: &Snapshot) -> String {
     if snapshot.identity.is_none() {
-        return "next: yzs key import".into();
+        return "next: lockset key import".into();
     }
     let drift = snapshot.drift();
     if !drift.is_empty() {
         return "next: fix the .sops.yaml / payload drift above".into();
     }
     if snapshot.payloads.iter().any(|p| !p.empty.is_empty()) {
-        return "next: yzs set <KEY> --payload secrets/prod/infra.env".into();
+        return "next: lockset set <KEY> --payload secrets/prod/infra.env".into();
     }
     "ready".into()
 }

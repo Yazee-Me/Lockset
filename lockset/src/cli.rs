@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "yzs",
+    name = "lockset",
     version,
     about = "Repository secrets: status, keys, recipients, and a runner",
     long_about = None
@@ -14,7 +14,7 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "DIR")]
     pub repo: Option<PathBuf>,
 
-    /// env | keyring | file:<path> (default: env when YAZEE_AGE_KEY is set, else keyring)
+    /// env | keyring | file:<path> (default: env when LOCKSET_AGE_KEY is set, else keyring)
     #[arg(long, global = true, value_name = "KIND")]
     pub custody: Option<String>,
 

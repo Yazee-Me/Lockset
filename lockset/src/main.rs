@@ -8,8 +8,8 @@ use std::process::ExitCode;
 
 use anyhow::{bail, Result};
 use clap::Parser;
-use yzs_core::ops::{self, Check, GrantRequest, RevokeRequest, RevokeTarget};
-use yzs_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretKey};
+use lockset_core::ops::{self, Check, GrantRequest, RevokeRequest, RevokeTarget};
+use lockset_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretKey};
 
 use crate::cli::{Cli, Command, KeyCommand, PersonCommand};
 
@@ -178,7 +178,7 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
             let covered = snapshot.payloads_with(&public);
             if covered.is_empty() {
                 eprintln!("warning: {public} is not a recipient of any payload yet");
-                eprintln!("  ask an operator: yzs grant {public} --label dev-<name>");
+                eprintln!("  ask an operator: lockset grant {public} --label dev-<name>");
                 return Ok(1);
             }
             for payload in &covered {
@@ -265,7 +265,7 @@ fn set(
     stdin: bool,
     from_env: Option<&str>,
 ) -> Result<u8> {
-    if !yzs_core::meta::is_name(name) {
+    if !lockset_core::meta::is_name(name) {
         bail!("invalid key name: {name}");
     }
     let id = PathId::new(payload);
@@ -369,8 +369,8 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
             println!();
             println!("their machine:");
             println!("  mise install");
-            println!("  yzs key import      # paste the private key they were given");
-            println!("  yzs run -- terraform plan");
+            println!("  lockset key import      # paste the private key they were given");
+            println!("  lockset run -- terraform plan");
             Ok(0)
         }
         PersonCommand::Remove {

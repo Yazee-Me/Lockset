@@ -1,4 +1,4 @@
-//! Tool and OS bindings for `yzs`.
+//! Tool and OS bindings for Lockset.
 //!
 //! The core knows nothing about these; each module here is one adapter:
 //! filesystem (`FsRepo`), the sops CLI (`SopsCodec`), and credential custody

@@ -24,15 +24,15 @@ Every mutating command prints its plan; `--dry-run` stops there.
 
 | Crate | Role |
 | --- | --- |
-| `yzs-core` | Model, `.sops.yaml` parse/rewrite, payload metadata, plans, reports. No I/O, no environment, no OS code; every external capability is a port (`Codec`, `Custody`, `Repo`). |
-| `yzs-tools` | The adapters: `FsRepo`, `SopsCodec` (the only external tool in the loop), and custody over the keychain, `YAZEE_AGE_KEY`, a file, or memory. |
-| `yzs` | The CLI. |
+| `lockset-core` | Model, `.sops.yaml` parse/rewrite, payload metadata, plans, reports. No I/O, no environment, no OS code; every external capability is a port (`Codec`, `Custody`, `Repo`). |
+| `lockset-tools` | The adapters: `FsRepo`, `SopsCodec` (the only external tool in the loop), and custody over the keychain, `LOCKSET_AGE_KEY`, a file, or memory. |
+| `lockset` | The CLI. |
 
 ## Requirements
 
-- `sops` 3.13 or newer on `PATH` (override with `YZS_SOPS`).
-- An age identity: `YAZEE_AGE_KEY` when set, the keychain item
-  `yazee-age-key`, or an explicit `--custody file:<path>`.
+- `sops` 3.13 or newer on `PATH` (override with `LOCKSET_SOPS`).
+- An age identity: `LOCKSET_AGE_KEY` when set, the keychain item
+  `lockset-age-key`, or an explicit `--custody file:<path>`.
 - A repository with `.sops.yaml` at its root, payloads as `secrets/**/*.env`,
   and recipients labelled by a trailing `# label,...` comment in recipient
   order.
@@ -40,13 +40,13 @@ Every mutating command prints its plan; `--dry-run` stops there.
 ## Use
 
 ```sh
-cargo install --path yzs --locked
+cargo install --path lockset --locked
 
-yzs status                       # identity, payloads, coverage, drift, empty values
-yzs who                          # label -> public key, payload count, local key
-yzs run --payload secrets/dev.env -- ./my-command
-yzs set NEW_KEY --payload secrets/dev.env
-yzs grant age1... --label dev-alice
+lockset status                       # identity, payloads, coverage, drift, empty values
+lockset who                          # label -> public key, payload count, local key
+lockset run --payload secrets/dev.env -- ./my-command
+lockset set NEW_KEY --payload secrets/dev.env
+lockset grant age1... --label dev-alice
 ```
 
 With mise (pinned toolchain):
@@ -55,13 +55,26 @@ With mise (pinned toolchain):
 mise install
 mise run test        # cargo test --workspace
 mise run build       # release build of the CLI
-mise run install     # link target/release/yzs into ~/.local/bin
+mise run install     # link target/release/lockset into ~/.local/bin
 ```
+
+## Migrating from yzs
+
+Rename `YAZEE_AGE_KEY` to `LOCKSET_AGE_KEY`, and `YZS_SOPS` to `LOCKSET_SOPS`.
+For one release the identity is also read from the old names, with a
+deprecation warning on stderr: `YAZEE_AGE_KEY` when `LOCKSET_AGE_KEY` is unset,
+and the `yazee-age-key` keychain item when `lockset-age-key` holds nothing.
+Writes (`key import`) always use the new names, and `key forget` removes the old
+keychain item too, so the deprecated copy does not outlive the command.
+
+To finish the keychain migration, run `lockset key import` with the same age
+identity; `LOCKSET_AGE_KEY` and `--custody file:<path>` do not need any change
+beyond the variable name.
 
 ## Design notes
 
-- `yzs-core` never spawns a process, reads the environment, or touches the
-  filesystem; `yzs-tools` implements the ports. That is what makes the model
+- `lockset-core` never spawns a process, reads the environment, or touches the
+  filesystem; `lockset-tools` implements the ports. That is what makes the model
   testable without credentials and reusable from another front end.
 - Plans are data (`Change` values) and `exec::apply` is the only place
   mutations happen, so `--dry-run` and tests share one path.

@@ -12,6 +12,8 @@ fuzz_target!(|data: &[u8]| {
         // A value never spans lines; a trailing CR is a line ending, an
         // embedded one stays part of the value (it cannot start a new env line).
         assert!(!value.contains('\n'), "a value spans lines: {value:?}");
-        assert!(!name.starts_with("sops_"), "metadata leaked as a value: {name:?}");
+        // No further name filter: `sops_*` keys are ordinary names to this
+        // generic parser. sops writes its metadata only in the encrypted file,
+        // decrypt strips it, and `meta` filters it for findings.
     }
 });

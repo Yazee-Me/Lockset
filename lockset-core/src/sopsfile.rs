@@ -581,6 +581,45 @@ mod tests {
     }
 
     #[test]
+    fn a_crlf_map_round_trips_byte_for_byte_when_nothing_changes() {
+        let text = format!(
+            "# kept\r\ncreation_rules:\r\n- path_regex: secrets/.*\\.env$\r\n  age: {A},{B} # admin,recovery (managed by terraform)\r\n"
+        );
+        let file = SopsFile::parse(&text).unwrap();
+        let sets: Vec<Vec<Recipient>> = file.rules().iter().map(|r| r.recipients.clone()).collect();
+
+        let out = file.render_with(&sets).unwrap();
+
+        assert_eq!(out, text, "a no-op rewrite must not touch one byte");
+    }
+
+    #[test]
+    fn a_crlf_map_keeps_every_line_ending_when_an_age_line_changes() {
+        let text = format!(
+            "# kept\r\ncreation_rules:\r\n- path_regex: secrets/.*\\.env$\r\n  age: {A},{B} # admin,recovery\r\n"
+        );
+        let file = SopsFile::parse(&text).unwrap();
+        let mut sets: Vec<Vec<Recipient>> =
+            file.rules().iter().map(|r| r.recipients.clone()).collect();
+        sets[0].push(Recipient {
+            key: PubKey::parse(C).unwrap(),
+            label: Some(Label::parse("dev-alice").unwrap()),
+        });
+
+        let out = file.render_with(&sets).unwrap();
+
+        assert!(
+            out.contains(&format!("age: {A},{B},{C} # admin,recovery,dev-alice\r\n")),
+            "{out:?}"
+        );
+        assert!(
+            !out.replace("\r\n", "").contains('\n'),
+            "mixed line endings: {out:?}"
+        );
+        assert!(out.starts_with("# kept\r\ncreation_rules:\r\n"), "{out:?}");
+    }
+
+    #[test]
     fn flags_drift() {
         let text =
             format!("creation_rules:\n- path_regex: secrets/prod/infra\\.env$\n  age: {A},{B}\n");

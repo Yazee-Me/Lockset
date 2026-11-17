@@ -5,12 +5,15 @@ edition.workspace = true
 license.workspace = true
 description = "Tool and OS bindings for Lockset: filesystem, sops, keychain"
 
+[features]
+default = ["keyring"]
+# The OS credential store. Off, `--custody keyring` fails with a clear message
+# instead of pulling the platform backend in; macOS uses `security(1)` regardless.
+keyring = ["dep:keyring"]
+
 [dependencies]
 lockset-core = { path = "../lockset-core" }
 serde_json = "1"
 
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring.workspace = true
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+keyring = { workspace = true, optional = true }

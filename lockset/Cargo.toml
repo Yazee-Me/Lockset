@@ -9,6 +9,12 @@ description = "Repository secrets with a small, boring surface"
 name = "lockset"
 path = "src/main.rs"
 
+[features]
+default = ["keyring"]
+# Forward the OS credential store; without it the binary still builds and
+# `--custody keyring` explains that the backend is not compiled in.
+keyring = ["lockset-tools/keyring"]
+
 [dependencies]
 lockset-core = { path = "../lockset-core" }
 lockset-tools = { path = "../lockset-tools" }

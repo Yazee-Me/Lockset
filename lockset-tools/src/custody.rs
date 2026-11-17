@@ -383,7 +383,7 @@ impl KeyringCustody {
             .map_err(|e| Error::custody(format!("cannot run security(1): {e}")))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "macos"), feature = "keyring"))]
     fn entry(&self) -> Result<keyring::v1::Entry> {
         keyring::v1::Entry::new(&self.service, &self.account).map_err(|e| {
             Error::custody(format!(
@@ -393,6 +393,14 @@ impl KeyringCustody {
         })
     }
 }
+
+/// The message a build without the `keyring` feature gives: the CLI still
+/// accepts `--custody keyring` so a pipeline gets an explanation, not a parse
+/// failure about a platform it may be able to use after a rebuild.
+#[cfg(all(not(target_os = "macos"), not(feature = "keyring")))]
+const KEYRING_UNAVAILABLE: &str = "the OS keychain backend is not compiled into this build \
+     (no `keyring` feature); use --custody env[:NAME] or --custody file:<absolute path>, or \
+     rebuild with --features keyring";
 
 impl Custody for KeyringCustody {
     fn get(&self) -> Result<Option<SecretKey>> {
@@ -410,7 +418,11 @@ impl Custody for KeyringCustody {
                 Ok(Some(SecretKey::from_text(value)?))
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(not(target_os = "macos"), not(feature = "keyring")))]
+        {
+            Err(Error::custody(KEYRING_UNAVAILABLE))
+        }
+        #[cfg(all(not(target_os = "macos"), feature = "keyring"))]
         {
             match self.entry()?.get_password() {
                 Ok(value) if !value.trim().is_empty() => Ok(Some(SecretKey::from_text(&value)?)),
@@ -454,7 +466,12 @@ impl Custody for KeyringCustody {
                 )),
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(not(target_os = "macos"), not(feature = "keyring")))]
+        {
+            let _ = key;
+            Err(Error::custody(KEYRING_UNAVAILABLE))
+        }
+        #[cfg(all(not(target_os = "macos"), feature = "keyring"))]
         {
             self.entry()?.set_password(key.expose()).map_err(|e| {
                 Error::custody(format!(
@@ -471,7 +488,11 @@ impl Custody for KeyringCustody {
             let _ = self.security(&delete_arguments(&self.service, &self.account))?;
             Ok(())
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(not(target_os = "macos"), not(feature = "keyring")))]
+        {
+            Err(Error::custody(KEYRING_UNAVAILABLE))
+        }
+        #[cfg(all(not(target_os = "macos"), feature = "keyring"))]
         {
             match self.entry()?.delete_credential() {
                 Ok(()) => Ok(()),
@@ -583,6 +604,26 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(feature = "keyring")))]
+    #[test]
+    fn a_build_without_the_keyring_feature_explains_itself() {
+        let custody = KeyringCustody::new("lockset-age-key", "alice");
+
+        for error in [
+            custody.get().unwrap_err(),
+            custody.set(&SecretKey::generate()).unwrap_err(),
+            custody.forget().unwrap_err(),
+        ] {
+            assert!(
+                error.to_string().contains("not compiled into this build"),
+                "{error}"
+            );
+            assert!(error.to_string().contains("--custody env"), "{error}");
+            assert!(error.to_string().contains("keyring"), "{error}");
+        }
+        assert_eq!(custody.kind(), CustodyKind::Keyring);
     }
 
     #[test]

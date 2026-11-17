@@ -43,7 +43,7 @@ fn one_bad_payload_does_not_block_the_reports() {
     assert!(stdout.contains("secrets/good.env"), "{stdout}");
     assert!(stdout.contains("unreadable payloads: 1"), "{stdout}");
     assert!(
-        stdout.contains("secrets/bad.env: not an age public key"),
+        stdout.contains("secrets/bad.env: not an x25519 age public key"),
         "{stdout}"
     );
 
@@ -64,7 +64,7 @@ fn one_bad_payload_does_not_block_the_reports() {
         .unwrap_or_else(|| panic!("no parse check in: {stdout}"));
     assert!(parse.contains("FAIL"), "{parse}");
     assert!(parse.contains("secrets/bad.env"), "{parse}");
-    assert!(parse.contains("not an age public key"), "{parse}");
+    assert!(parse.contains("not an x25519 age public key"), "{parse}");
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn a_bad_payload_does_not_block_an_unrelated_operation() {
     // A payload that cannot be parsed is a config error for a targeted command.
     assert_eq!(set_bad.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("cannot use secrets/bad.env"), "{stderr}");
-    assert!(stderr.contains("not an age public key"), "{stderr}");
+    assert!(stderr.contains("not an x25519 age public key"), "{stderr}");
 }
 
 #[cfg(unix)]

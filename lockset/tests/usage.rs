@@ -14,7 +14,8 @@ fn run_refuses_bad_payloads_before_the_codec() {
         "secrets/../dev.env",
         "/etc/passwd",
         "secrets//dev.env",
-        "secrets\\dev.env",
+        "secrets\\..\\dev.env",
+        "C:\\secrets\\dev.env",
         "-x",
     ] {
         let payload_option = format!("--payload={payload}");

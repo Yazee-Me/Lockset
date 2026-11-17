@@ -60,9 +60,21 @@ pub struct PubKey(String);
 impl PubKey {
     pub fn parse(s: &str) -> Result<Self> {
         let s = s.trim();
+        if s.starts_with("ssh-") || s.starts_with("ecdsa-sha2-") {
+            return Err(Error::invalid(format!(
+                "SSH recipients are not supported: '{}'; only x25519 age recipients (age1...) are",
+                truncate(s)
+            )));
+        }
+        if s.starts_with("-----BEGIN PGP") {
+            return Err(Error::invalid(format!(
+                "PGP recipients are not supported: '{}'; only x25519 age recipients (age1...) are",
+                truncate(s)
+            )));
+        }
         if !s.starts_with("age1") || s.len() < 50 || !s.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(Error::invalid(format!(
-                "not an age public key: '{}'",
+                "not an x25519 age public key: '{}'; SSH, PGP, plugin, and KMS recipients are not supported",
                 truncate(s)
             )));
         }
@@ -95,6 +107,12 @@ impl SecretKey {
     /// wrapped in the recovery banner, or a bare key line. Exactly one key is
     /// accepted; anything else is an error that never quotes the input.
     pub fn from_text(text: &str) -> Result<Self> {
+        if text.contains("-----BEGIN AGE ENCRYPTED FILE-----") {
+            return Err(Error::invalid(
+                "this is an age-encrypted file, not an identity; passphrase-encrypted identities \
+                 are not supported — decrypt it (`age -d`) and paste the AGE-SECRET-KEY-1... line",
+            ));
+        }
         let mut found: Vec<&str> = Vec::new();
         for line in text.lines() {
             let line = line.trim().trim_matches('"').trim_matches('\'');
@@ -108,7 +126,8 @@ impl SecretKey {
         }
         match found.len() {
             0 => Err(Error::invalid(
-                "no AGE-SECRET-KEY-1... identity found in the input",
+                "no AGE-SECRET-KEY-1... identity found in the input (passphrase-encrypted \
+                 identities, plugin identities, and SSH keys are not supported)",
             )),
             1 => Self::from_value(found[0]),
             n => Err(Error::invalid(format!(
@@ -173,28 +192,42 @@ fn truncate(s: &str) -> String {
 pub struct PathId(String);
 
 impl PathId {
-    /// Reject anything that could leave the repository or change how a child
-    /// process reads the argument: an absolute path, an empty or `..` segment,
-    /// a backslash, or a leading `-`.
+    /// Parse a repository-relative path. Both separators are accepted on input
+    /// and stored as `/`, so a Windows path and a POSIX path for the same file
+    /// are the same value. Ambiguous or escaping forms are refused: an absolute
+    /// POSIX path, a drive or UNC path, a `.`/`..`/empty segment, a segment
+    /// with `:` (a drive or alternate-data-stream form), or a leading `-`
+    /// (which reads as an option).
     pub fn parse(s: &str) -> Result<Self> {
+        let normalized = s.replace('\\', "/");
+        let windows_absolute = {
+            let bytes = normalized.as_bytes();
+            bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
+        };
         let why = if s.is_empty() {
             Some("the path is empty")
-        } else if s.starts_with('/') {
+        } else if s.starts_with("\\\\") {
+            Some("a UNC path is absolute")
+        } else if normalized.starts_with('/') {
             Some("the path is absolute")
-        } else if s.contains('\\') {
-            Some("backslashes are not separators here")
+        } else if windows_absolute {
+            Some("a drive path is absolute")
         } else if s.starts_with('-') {
             Some("a leading '-' reads as an option")
-        } else if s.split('/').any(str::is_empty) {
+        } else if normalized.split('/').any(str::is_empty) {
             Some("it has an empty segment")
-        } else if s.split('/').any(|segment| segment == "..") {
+        } else if normalized.split('/').any(|segment| segment == "..") {
             Some("'..' leaves the repository")
+        } else if normalized.split('/').any(|segment| segment == ".") {
+            Some("a '.' segment is ambiguous")
+        } else if normalized.split('/').any(|segment| segment.contains(':')) {
+            Some("a ':' segment is a drive or stream form on Windows")
         } else {
             None
         };
         match why {
             Some(why) => Err(Error::invalid(format!("invalid path '{s}': {why}"))),
-            None => Ok(Self(s.to_owned())),
+            None => Ok(Self(normalized)),
         }
     }
 
@@ -246,8 +279,14 @@ mod tests {
             "/etc/passwd",
             "secrets//dev.env",
             "secrets/",
-            "secrets\\dev.env",
             "-x",
+            // Windows forms that are absolute or ambiguous.
+            "C:\\secrets\\dev.env",
+            "c:/secrets/dev.env",
+            "\\\\server\\share\\a.env",
+            "secrets\\\\dev.env",
+            "secrets/./dev.env",
+            "secrets/dev.env:stream",
         ] {
             let error = PathId::parse(value).expect_err(value);
             assert!(
@@ -269,6 +308,17 @@ mod tests {
     }
 
     #[test]
+    fn path_ids_normalize_both_separators() {
+        for (input, expected) in [
+            ("secrets\\dev.env", "secrets/dev.env"),
+            ("secrets\\prod/host-main.env", "secrets/prod/host-main.env"),
+            (".sops.yaml", ".sops.yaml"),
+        ] {
+            assert_eq!(PathId::parse(input).unwrap().as_str(), expected, "{input}");
+        }
+    }
+
+    #[test]
     fn label_rules() {
         assert!(Label::parse("admin").is_ok());
         assert!(Label::parse("dev-jack").is_ok());
@@ -283,7 +333,41 @@ mod tests {
             PubKey::parse("age1p243ylp98pr939vj8eqsmaczq8c9gwxwnlupz9pvelpfj6ha0cgqjsue6x").is_ok()
         );
         assert!(PubKey::parse("age1short").is_err());
-        assert!(PubKey::parse("ssh-ed25519 AAAA").is_err());
+
+        let ssh = PubKey::parse("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI").unwrap_err();
+        assert!(
+            ssh.to_string().contains("SSH recipients are not supported"),
+            "{ssh}"
+        );
+
+        let pgp = PubKey::parse("-----BEGIN PGP PUBLIC KEY BLOCK-----").unwrap_err();
+        assert!(
+            pgp.to_string().contains("PGP recipients are not supported"),
+            "{pgp}"
+        );
+
+        let kms = PubKey::parse("arn:aws:kms:eu-west-1:1:key/abc").unwrap_err();
+        assert!(
+            kms.to_string().contains("KMS recipients are not supported"),
+            "{kms}"
+        );
+    }
+
+    #[test]
+    fn passphrase_encrypted_identity_files_are_refused_with_an_explanation() {
+        let error = SecretKey::from_text(
+            "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24=\n-----END AGE ENCRYPTED FILE-----\n",
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("passphrase-encrypted"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("age -d"), "{error}");
+
+        let plugin = SecretKey::from_text("AGE-PLUGIN-YUBIKEY-1ABCDEF\n").unwrap_err();
+        assert!(plugin.to_string().contains("plugin"), "{plugin}");
     }
 
     #[test]

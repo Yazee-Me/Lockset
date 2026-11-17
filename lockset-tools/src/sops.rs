@@ -392,6 +392,7 @@ mod tests {
 
 #[cfg(test)]
 mod preflight_tests {
+    #[cfg(unix)]
     use std::path::PathBuf;
 
     use super::*;

@@ -56,9 +56,11 @@ Every mutating command prints its plan; `--dry-run` stops there.
   the forms; see “Custody policy” below.
 - A repository with `.sops.yaml` at its root (or the `repo.sops_config` path),
   payloads as `secrets/**/*` (or `repo.payload_globs`), and recipients labelled
-  by a trailing `# label,...` comment in recipient order. Payload paths are repository-relative: an absolute path, `..`, a
-  backslash, an empty segment, or a leading `-` is a usage error (exit 2) before
-  any sops call.
+  by a trailing `# label,...` comment in recipient order. Payload paths are
+  repository-relative and use either separator on input (`secrets\\dev.env` is
+  `secrets/dev.env`); an absolute POSIX path, a drive or UNC path, `..`, a `.`,
+  an empty, or a `:` segment, or a leading `-` is a usage error (exit 2) before
+  any sops call. See “Portability”.
 - The only payload format is dotenv (`.env`). Every non-hidden file matched by
   `repo.payload_globs` is reported as an unsupported payload in `status` and
   `check` when it is another format, and `run`/`set` reject it with a message
@@ -125,6 +127,37 @@ non-empty value, so a retried pipeline step cannot overwrite a configured
 secret; an empty value counts as absent, and the note that says so is on stderr.
 Reading the payload needs the identity, so `--if-absent` asks for it even with
 `--dry-run`.
+
+## Portability
+
+Lockset runs on Linux, macOS, and Windows. The same repository and the same
+paths work on all three:
+
+- **Separators.** Payload paths, `repo.sops_config`, and `repo.default_payloads`
+  accept `/` and `\\`; they are stored and compared as `/`, so
+  `secrets\\dev.env` and `secrets/dev.env` are one file. Ambiguous forms are
+  refused rather than guessed: absolute POSIX paths, drive (`C:`) and UNC
+  (`\\\\server`) paths, `.`/`..`/empty segments, and segments containing `:`
+  (a drive or alternate-stream form on Windows). Glob patterns in
+  `repo.payload_globs` stay `/`-only, because they are patterns, not paths.
+- **Line endings.** Every rewrite preserves them: a CRLF `.sops.yaml` keeps
+  CRLF, a file with no change is written back byte-for-byte, and a payload's
+  line endings are sops's to keep (lockset writes values through sops, never as
+  a file replace).
+- **Keychain.** `--custody keyring` uses `security(1)` on macOS and the OS
+  credential store on Linux and Windows. The backend is the default-on
+  `keyring` feature; `cargo build --no-default-features` produces a binary for
+  targets or images without it, and `--custody keyring` there fails with a
+  message naming `env:`/`file:` and the missing feature instead of a compile or
+  runtime surprise.
+- **Identity types.** `AGE-SECRET-KEY-1…` x25519 identities and `age1…`
+  recipients only. Not supported, each with a message that says so: plugin
+  identities (`AGE-PLUGIN-…`) and plugin recipients, passphrase-encrypted
+  identity files, SSH recipients (`ssh-ed25519 …`), PGP recipients, and
+  KMS/GCP/Azure/Vault rules (those rules parse and are reported per rule; only
+  `grant`/`revoke` on them refuse).
+- **CI.** The portability job builds without the keyring backend and checks the
+  Windows, Linux, and macOS targets.
 
 ## Configuration
 
@@ -384,6 +417,9 @@ this machine has — no particular label is required.
 - Paths are `PathId` values parsed relative to the repository root, so no
   `Repo` or `Codec` call can be handed a traversal or a value sops would read
   as an option.
+- Paths are normalized to `/` when parsed, so a Windows path and a POSIX path
+  reach the same `PathId` and the same rule; a rewrite keeps the file's line
+  endings (CRLF stays CRLF, and a no-op rewrite is byte-identical).
 - Rewrites touch only the `age:` line of `.sops.yaml` and are followed by a
   decrypt, because a structurally valid file with lost values only shows up on
   read.

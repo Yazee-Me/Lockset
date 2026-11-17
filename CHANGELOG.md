@@ -59,6 +59,21 @@
 
 ### Added
 
+- **Paths accept both separators and reject ambiguous forms.** `secrets\dev.env`
+  parses to `secrets/dev.env` (payload paths, `repo.sops_config`, and
+  `repo.default_payloads`); absolute POSIX, drive, and UNC paths, `.`/`..`,
+  empty, and `:` segments are refused with the reason, before any sops call.
+- **The keychain is an explicit, default-on `keyring` feature.** A build with
+  `--no-default-features` still compiles everywhere and `--custody keyring`
+  explains that the backend is absent; CI builds without it and checks the
+  Windows, Linux, and macOS targets.
+- The supported identity types are documented, and the refusals name them:
+  x25519 `AGE-SECRET-KEY-1…`/`age1…` only; plugin identities and recipients,
+  passphrase-encrypted identity files, SSH and PGP recipients, and KMS-family
+  rules each fail with a message that says what is unsupported and what to do.
+- CRLF is pinned by tests: a CRLF sops config is rewritten with CRLF, and a
+  rewrite with no change is byte-identical.
+
 - **`lockset` is usable as a library.** `lockset::run(cli, &inputs, out, err)`
   runs the same handlers as the binary and returns the exit code; `Inputs`
   carries the variables, working directory, stdin, and terminal state, and both

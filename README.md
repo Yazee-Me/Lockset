@@ -51,6 +51,11 @@ Every mutating command prints its plan; `--dry-run` stops there.
   order. Payload paths are repository-relative: an absolute path, `..`, a
   backslash, an empty segment, or a leading `-` is a usage error (exit 2) before
   any sops call.
+- The only payload format is dotenv (`.env`). Every other non-hidden file under
+  `secrets/` is reported as an unsupported payload in `status` and `check`, and
+  `run`/`set` reject it with a message naming the format, so no payload is
+  silently ignored or half-counted. Hidden files (`.gitkeep`, editor
+  temporaries) are not payloads.
 
 ## Use
 

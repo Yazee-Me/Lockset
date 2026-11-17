@@ -550,6 +550,7 @@ pub fn env_for(
 ) -> Result<Vec<(String, String)>> {
     let mut out: Vec<(String, String)> = Vec::new();
     for id in ids {
+        crate::meta::require_dotenv(id)?;
         let plain = codec.decrypt(id, key)?;
         let text = String::from_utf8(plain)
             .map_err(|_| Error::failed(format!("{id} does not decrypt to UTF-8")))?;
@@ -633,6 +634,51 @@ mod tests {
             report.contains("identity: unavailable — no session keyring"),
             "{report}"
         );
+    }
+
+    struct FakeCodec(&'static str);
+
+    impl Codec for FakeCodec {
+        fn decrypt(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<Vec<u8>> {
+            Ok(self.0.as_bytes().to_vec())
+        }
+        fn rewrap(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
+        fn rekey(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
+        fn set_value(
+            &self,
+            _id: &PathId,
+            _name: &str,
+            _value: &str,
+            _key: &crate::model::SecretKey,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn env_for_reads_dotenv_payloads() {
+        let key = crate::model::SecretKey::generate();
+        let codec = FakeCodec("A=1\nB=2\n");
+
+        let envs = env_for(&codec, &[PathId::parse("secrets/a.env").unwrap()], &key).unwrap();
+
+        assert_eq!(envs.len(), 2);
+        assert!(envs.contains(&("A".to_owned(), "1".to_owned())), "{envs:?}");
+    }
+
+    #[test]
+    fn env_for_rejects_a_payload_that_is_not_dotenv() {
+        let key = crate::model::SecretKey::generate();
+        let codec = FakeCodec("A: 1\n");
+
+        let error = env_for(&codec, &[PathId::parse("secrets/a.yaml").unwrap()], &key).unwrap_err();
+
+        assert!(error.to_string().contains("dotenv"), "{error}");
+        assert!(error.to_string().contains("a.yaml"), "{error}");
     }
 
     #[test]

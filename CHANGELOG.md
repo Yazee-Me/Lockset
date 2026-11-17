@@ -58,6 +58,11 @@
 
 ### Fixed
 
+- Payload formats are explicit: dotenv (`.env`) is the only supported format.
+  `meta` no longer half-parses a YAML `sops:` block, discovery lists every
+  non-hidden file under `secrets/` so an unsupported payload is reported as a
+  finding instead of being ignored, and `run`/`set` reject non-`.env` payloads
+  with a message naming the format.
 - A payload that cannot be parsed no longer aborts `status`, `who`, or `check`:
   it becomes a finding with its path and error, `check` gains a `payloads
   parse` check, and unrelated payloads — including `rotate --all` — keep

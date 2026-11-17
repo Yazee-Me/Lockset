@@ -83,7 +83,16 @@ impl Repo for FsRepo {
     }
 }
 
-/// Discover `.env` payloads without following symlinks: a symlink can duplicate
+/// Hidden files (`.gitkeep`, editor temporaries) are not payloads; everything
+/// else under the payload directory is listed, so an unsupported payload is
+/// reported rather than silently skipped.
+fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.'))
+}
+
+/// Discover payload files without following symlinks: a symlink can duplicate
 /// a payload or loop the tree, so it is skipped. Canonical paths are deduped so
 /// no payload is reported twice.
 fn collect(
@@ -122,7 +131,7 @@ fn collect(
         let path = entry.path();
         if file_type.is_dir() {
             collect(&path, root, seen, out)?;
-        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("env") {
+        } else if file_type.is_file() && !is_hidden(&path) {
             let canonical = path.canonicalize().map_err(|error| {
                 Error::failed(format!("cannot resolve {}: {error}", path.display()))
             })?;
@@ -189,6 +198,19 @@ mod tests {
         let repo = FsRepo::new(&root.0);
 
         assert_eq!(ids(&repo), ["secrets/a.env", "secrets/sub/b.env"]);
+    }
+
+    #[test]
+    fn listing_includes_unsupported_files_and_skips_hidden_ones() {
+        let root = TempDir::new("formats");
+        std::fs::write(root.0.join("secrets/a.env"), "A=1\n").unwrap();
+        std::fs::write(root.0.join("secrets/config.yaml"), "A: 1\n").unwrap();
+        std::fs::write(root.0.join("secrets/.gitkeep"), "").unwrap();
+
+        assert_eq!(
+            ids(&FsRepo::new(&root.0)),
+            ["secrets/a.env", "secrets/config.yaml"]
+        );
     }
 
     #[test]

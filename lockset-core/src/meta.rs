@@ -19,9 +19,20 @@ impl PayloadMeta {
     }
 }
 
-/// Parse a sops payload. Dotenv files carry their metadata as flat `sops_*`
-/// keys; YAML/JSON files carry a `sops:` block. Both are supported.
+/// Parse a sops payload. Lockset supports one payload format: dotenv (`.env`),
+/// whose metadata is a set of flat `sops_*` keys. Anything else is rejected by
+/// name and by content instead of being half-parsed.
 pub fn parse(id: PathId, text: &str) -> Result<PayloadMeta> {
+    if !is_dotenv(&id) {
+        return Err(Error::invalid(format!(
+            "not a dotenv payload; {DOTENV_ONLY}"
+        )));
+    }
+    if looks_like_yaml_or_json(text) {
+        return Err(Error::invalid(format!(
+            "{id} carries a YAML/JSON sops block; lockset supports dotenv (.env) payloads only"
+        )));
+    }
     let meta_at = metadata_start(text);
     let (values, meta) = match meta_at {
         Some(i) => text.split_at(i),
@@ -67,13 +78,40 @@ pub fn parse(id: PathId, text: &str) -> Result<PayloadMeta> {
     })
 }
 
-/// Byte offset where the sops metadata begins: the first `sops_` line
-/// (dotenv) or the `sops:` block (YAML).
+/// The format rule in one sentence, shared by the errors that state it.
+const DOTENV_ONLY: &str =
+    "lockset supports .env payloads only — YAML/JSON payloads are not implemented";
+
+/// The only payload format lockset handles: a file whose name ends in `.env`.
+pub fn is_dotenv(id: &PathId) -> bool {
+    id.as_str().ends_with(".env")
+}
+
+/// Reject a payload that is not dotenv, naming it and the supported format.
+pub fn require_dotenv(id: &PathId) -> Result<()> {
+    if is_dotenv(id) {
+        return Ok(());
+    }
+    Err(Error::refused(format!(
+        "{id} is not a dotenv payload; {DOTENV_ONLY}"
+    )))
+}
+
+/// What sops writes for a YAML or JSON payload: a `sops:` block, or a JSON
+/// object. Neither is accepted in a dotenv payload.
+fn looks_like_yaml_or_json(text: &str) -> bool {
+    text.trim_start().starts_with('{')
+        || text
+            .lines()
+            .any(|line| line.trim_start().starts_with("sops:"))
+}
+
+/// Byte offset where the dotenv sops metadata begins: the first `sops_` line.
 fn metadata_start(text: &str) -> Option<usize> {
     let mut offset = 0usize;
     for line in text.split_inclusive('\n') {
         let body = line.trim_start();
-        if body.starts_with("sops_") || body.starts_with("sops:") {
+        if body.starts_with("sops_") {
             return Some(offset);
         }
         offset += line.len();
@@ -82,11 +120,7 @@ fn metadata_start(text: &str) -> Option<usize> {
 }
 
 fn parse_recipients(meta: &str) -> Result<Vec<PubKey>> {
-    let flat = flat_recipients(meta)?;
-    if !flat.is_empty() {
-        return Ok(flat);
-    }
-    yaml_recipients(meta)
+    flat_recipients(meta)
 }
 
 fn flat_recipients(meta: &str) -> Result<Vec<PubKey>> {
@@ -98,32 +132,6 @@ fn flat_recipients(meta: &str) -> Result<Vec<PubKey>> {
         if name.starts_with("sops_age__list_") && name.ends_with("__map_recipient") {
             out.push(PubKey::parse(value)?);
         }
-    }
-    Ok(out)
-}
-
-fn yaml_recipients(meta: &str) -> Result<Vec<PubKey>> {
-    let start = meta.find("sops:").unwrap_or(0);
-    let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&meta[start..])
-        .map_err(|e| Error::invalid(format!("cannot parse the sops metadata: {e}")))?;
-    let Some(age) = value.get("sops").and_then(|sops| sops.get("age")) else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
-    match age {
-        serde_yaml_ng::Value::Sequence(items) => {
-            for item in items {
-                if let Some(key) = item.get("recipient").and_then(|r| r.as_str()) {
-                    out.push(PubKey::parse(key)?);
-                }
-            }
-        }
-        serde_yaml_ng::Value::Mapping(map) => {
-            if let Some(key) = map.get("recipient").and_then(|r| r.as_str()) {
-                out.push(PubKey::parse(key)?);
-            }
-        }
-        _ => {}
     }
     Ok(out)
 }
@@ -178,19 +186,41 @@ mod tests {
     }
 
     #[test]
-    fn parses_yaml_metadata() {
+    fn a_yaml_payload_is_rejected_by_name() {
         let text = format!(
             "CLOUDFLARE_TUNNEL_TOKEN_MAIN: ENC[AES256_GCM,data:abc,type:str]\n\
              sops:\n    age:\n        - recipient: {A}\n          enc: |\n            x\n    version: 3.13.3\n"
         );
-        let meta = parse(PathId::parse("secrets/prod/x.yaml").unwrap(), &text).unwrap();
-        assert!(meta.encrypted);
-        assert_eq!(meta.recipients.len(), 1);
+
+        let error = parse(PathId::parse("secrets/prod/x.yaml").unwrap(), &text).unwrap_err();
+
+        assert!(error.to_string().contains("dotenv"), "{error}");
+        assert!(error.to_string().contains("YAML/JSON"), "{error}");
+    }
+
+    #[test]
+    fn a_json_payload_is_rejected_by_name() {
+        let error = parse(
+            PathId::parse("secrets/prod/x.json").unwrap(),
+            "{\"A\": \"ENC[a,type:str]\"}\n",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("dotenv"), "{error}");
+    }
+
+    #[test]
+    fn a_dotenv_file_holding_yaml_metadata_is_rejected() {
+        let text = "A=secret\nsops:\n    version: 3.13.3\n";
+
+        let error = parse(PathId::parse("secrets/prod/x.env").unwrap(), text).unwrap_err();
+
+        assert!(error.to_string().contains("YAML/JSON"), "{error}");
     }
 
     #[test]
     fn flags_plaintext_values() {
-        let text = "A=secret\nsops:\n    version: 3.13.3\n";
+        let text = "A=secret\nB=ENC[AES256_GCM,data:abc,type:str]\n";
         let meta = parse(PathId::parse("secrets/prod/x.env").unwrap(), text).unwrap();
         assert_eq!(meta.plaintext, vec!["A"]);
     }

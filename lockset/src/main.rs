@@ -174,6 +174,9 @@ fn run_command(
             .map(|path| payload_id(path))
             .collect::<Result<_>>()?
     };
+    for id in &ids {
+        lockset_core::meta::require_dotenv(id).map_err(|error| usage::error(error.to_string()))?;
+    }
     let key = context.require_key()?;
     let envs = exported_payload(ops::env_for(&context.codec, &ids, &key)?, pass_custody)?;
 

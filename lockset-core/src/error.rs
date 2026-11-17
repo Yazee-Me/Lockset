@@ -10,6 +10,10 @@ pub enum Error {
     /// success: the caller reports the files and the recovery step.
     #[error("{0}")]
     Partial(String),
+    /// Input changed, or another process holds the repository: nothing was
+    /// written and the command can be retried.
+    #[error("{0}")]
+    Conflict(String),
 }
 
 impl Error {
@@ -24,6 +28,9 @@ impl Error {
     }
     pub fn partial(msg: impl Into<String>) -> Self {
         Self::Partial(msg.into())
+    }
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::Conflict(msg.into())
     }
 }
 

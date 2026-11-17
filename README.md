@@ -90,6 +90,14 @@ mise run install     # link target/release/lockset into ~/.local/bin
   either lands whole or leaves the repository as it was. When a restore itself
   fails the command reports a partial apply (exit 6) naming the files and the
   recovery step, and never returns success.
+- Mutating commands hold an advisory lock for the whole read-plan-apply cycle —
+  `.git/lockset.lock` (following a worktree's `gitdir:`) or `.lockset.lock`
+  without a git directory. A second process waits `--lock-timeout` seconds
+  (default 10) and then exits 5 with a conflict instead of racing.
+- A plan records the digest of every file it touches. If one changed after the
+  snapshot — an editor, another tool — the apply writes nothing and exits 5.
+- Writes are durable: the temp file is fsynced before the rename and the parent
+  directory after it, and a CRLF `.sops.yaml` is rewritten with CRLF.
 - Paths are `PathId` values parsed relative to the repository root, so no
   `Repo` or `Codec` call can be handed a traversal or a value sops would read
   as an option.

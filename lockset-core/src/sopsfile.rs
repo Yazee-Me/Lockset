@@ -195,7 +195,12 @@ impl SopsFile {
                 keys.join(","),
                 comment
             ));
-            if self.text[rule.age_span.clone()].ends_with('\n') {
+            // Keep the line ending the file already uses: a CRLF map must not
+            // end up with mixed endings.
+            let line = &self.text[rule.age_span.clone()];
+            if line.ends_with("\r\n") {
+                out.push_str("\r\n");
+            } else if line.ends_with('\n') {
                 out.push('\n');
             }
             pos = rule.age_span.end;
@@ -309,6 +314,31 @@ mod tests {
         }
         let out = f.render_with(&sets).unwrap();
         assert_eq!(out, f.text());
+    }
+
+    #[test]
+    fn render_keeps_a_crlf_file_crlf() {
+        let text = format!(
+            "# kept\r\ncreation_rules:\r\n- path_regex: secrets/prod/infra\\.env$\r\n  age: {A},{B} # admin,recovery\r\n"
+        );
+        let file = SopsFile::parse(&text).unwrap();
+        let mut sets: Vec<Vec<Recipient>> =
+            file.rules().iter().map(|r| r.recipients.clone()).collect();
+        sets[0].push(Recipient {
+            key: PubKey::parse(C).unwrap(),
+            label: Some(Label::parse("ci").unwrap()),
+        });
+
+        let out = file.render_with(&sets).unwrap();
+
+        assert!(out.contains("\r\n"), "no CRLF left: {out:?}");
+        assert!(
+            !out.replace("\r\n", "").contains('\n'),
+            "mixed line endings: {out:?}"
+        );
+        assert!(out.contains(C), "{out}");
+        let again = SopsFile::parse(&out).unwrap();
+        assert_eq!(again.rules()[0].recipients.len(), 3);
     }
 
     #[test]

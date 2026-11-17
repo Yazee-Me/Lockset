@@ -8,4 +8,5 @@
 pub mod custody;
 pub mod env;
 pub mod fs_repo;
+pub mod lock;
 pub mod sops;

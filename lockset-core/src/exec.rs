@@ -27,12 +27,13 @@ pub fn apply(
 ) -> Result<Vec<String>> {
     one_domain(plan)?;
     let backups = backup(plan, repo)?;
+    check_inputs(plan, &backups)?;
     let mut log = Vec::new();
     let mut written: Vec<PathId> = Vec::new();
     for change in &plan.changes {
         match run(change, repo, codec, custody, key) {
             Ok(line) => {
-                if let Some(path) = touched(change) {
+                if let Some(path) = change.path() {
                     written.push(path.clone());
                 }
                 log.push(line);
@@ -46,8 +47,8 @@ pub fn apply(
 /// A plan must not mix repository and custody changes: files can be restored,
 /// a stored or forgotten key cannot.
 fn one_domain(plan: &Plan) -> Result<()> {
-    let files = plan.changes.iter().any(|change| touched(change).is_some());
-    let custody = plan.changes.iter().any(|change| touched(change).is_none());
+    let files = plan.changes.iter().any(|change| change.path().is_some());
+    let custody = plan.changes.iter().any(|change| change.path().is_none());
     if files && custody {
         return Err(Error::failed(
             "a plan cannot mix repository and custody changes; apply them separately",
@@ -56,22 +57,11 @@ fn one_domain(plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-/// The file a change mutates, if any.
-fn touched(change: &Change) -> Option<&PathId> {
-    match change {
-        Change::WriteFile { path, .. } => Some(path),
-        Change::UpdateKeys { payload } => Some(payload),
-        Change::RotateDataKey { payload } => Some(payload),
-        Change::SetValue { payload, .. } => Some(payload),
-        Change::StoreKey { .. } | Change::ForgetKey { .. } => None,
-    }
-}
-
 /// Read every file the plan touches before touching any of them.
 fn backup(plan: &Plan, repo: &dyn Repo) -> Result<BTreeMap<PathId, Vec<u8>>> {
     let mut backups = BTreeMap::new();
     for change in &plan.changes {
-        let Some(path) = touched(change) else {
+        let Some(path) = change.path() else {
             continue;
         };
         if backups.contains_key(path) {
@@ -83,6 +73,30 @@ fn backup(plan: &Plan, repo: &dyn Repo) -> Result<BTreeMap<PathId, Vec<u8>>> {
         backups.insert(path.clone(), bytes);
     }
     Ok(backups)
+}
+
+/// Refuse to write when a file the plan was built from changed in between: the
+/// snapshot and the apply must describe the same inputs.
+fn check_inputs(plan: &Plan, backups: &BTreeMap<PathId, Vec<u8>>) -> Result<()> {
+    for change in &plan.changes {
+        let Some(path) = change.path() else {
+            continue;
+        };
+        let Some(expected) = plan.expected.get(path) else {
+            return Err(Error::failed(format!(
+                "the plan was built without a digest of {path}; refusing to write"
+            )));
+        };
+        let bytes = backups
+            .get(path)
+            .ok_or_else(|| Error::failed(format!("no backup of {path}")))?;
+        if crate::digest(bytes) != *expected {
+            return Err(Error::conflict(format!(
+                "{path} changed after the snapshot was taken; nothing was written, re-run the command"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn run(
@@ -140,7 +154,7 @@ fn undo(
             paths.push(path);
         }
     }
-    if let Some(path) = touched(failed) {
+    if let Some(path) = failed.path() {
         if !paths.contains(&path) {
             paths.push(path);
         }
@@ -354,6 +368,24 @@ mod tests {
         plan
     }
 
+    /// Seal a plan with the digests the fake repository currently holds, as
+    /// wiring does from a snapshot.
+    fn seal(plan: &mut Plan, repo: &MemoryRepo) {
+        let mut digests = BTreeMap::new();
+        for path in plan.changes.iter().filter_map(Change::path) {
+            if let Ok(bytes) = repo.read(path) {
+                digests.insert(path.clone(), crate::digest(&bytes));
+            }
+        }
+        plan.expect(&digests);
+    }
+
+    fn sealed(repo: &MemoryRepo) -> Plan {
+        let mut plan = plan();
+        seal(&mut plan, repo);
+        plan
+    }
+
     fn repo() -> MemoryRepo {
         MemoryRepo::new(&[
             (".sops.yaml", "old map\n"),
@@ -375,7 +407,7 @@ mod tests {
         let custody = MemoryCustody::default();
         let key = SecretKey::generate();
 
-        let log = apply(&plan(), &repo, &codec, &custody, &key).unwrap();
+        let log = apply(&sealed(&repo), &repo, &codec, &custody, &key).unwrap();
 
         assert_eq!(
             log,
@@ -401,7 +433,7 @@ mod tests {
             let custody = MemoryCustody::default();
             let key = SecretKey::generate();
 
-            let error = apply(&plan(), &repo, &codec, &custody, &key).unwrap_err();
+            let error = apply(&sealed(&repo), &repo, &codec, &custody, &key).unwrap_err();
 
             assert!(matches!(error, Error::Failed(_)), "step {step}: {error:?}");
             assert!(
@@ -420,7 +452,7 @@ mod tests {
         let custody = MemoryCustody::default();
         let key = SecretKey::generate();
 
-        let error = apply(&plan(), &repo, &codec, &custody, &key).unwrap_err();
+        let error = apply(&sealed(&repo), &repo, &codec, &custody, &key).unwrap_err();
 
         assert!(matches!(error, Error::Failed(_)), "{error:?}");
         assert_untouched(&repo);
@@ -435,7 +467,7 @@ mod tests {
         let custody = MemoryCustody::default();
         let key = SecretKey::generate();
 
-        let error = apply(&plan(), &repo, &codec, &custody, &key).unwrap_err();
+        let error = apply(&sealed(&repo), &repo, &codec, &custody, &key).unwrap_err();
 
         assert!(matches!(error, Error::Partial(_)), "{error:?}");
         let message = error.to_string();
@@ -453,6 +485,7 @@ mod tests {
         plan.push(Change::UpdateKeys {
             payload: PathId::parse("secrets/missing.env").unwrap(),
         });
+        seal(&mut plan, &repo);
 
         let error = apply(&plan, &repo, &codec, &custody, &key).unwrap_err();
 
@@ -472,7 +505,7 @@ mod tests {
         let codec = MemoryCodec::new(&repo);
         let custody = MemoryCustody::default();
         let key = SecretKey::generate();
-        let mut mixed = plan();
+        let mut mixed = sealed(&repo);
         mixed.push(Change::StoreKey {
             custody: CustodyKind::Memory,
         });
@@ -482,6 +515,39 @@ mod tests {
         assert!(error.to_string().contains("cannot mix"), "{error}");
         assert!(repo.writes.borrow().is_empty());
         assert!(!*custody.stored.borrow());
+    }
+
+    #[test]
+    fn a_changed_input_aborts_before_writing() {
+        let repo = repo();
+        let codec = MemoryCodec::new(&repo);
+        let custody = MemoryCustody::default();
+        let key = SecretKey::generate();
+        let plan = sealed(&repo);
+
+        // Another process (or an editor) rewrites the map before the apply.
+        repo.put(&PathId::parse(".sops.yaml").unwrap(), "edited elsewhere\n");
+
+        let error = apply(&plan, &repo, &codec, &custody, &key).unwrap_err();
+
+        assert!(matches!(error, Error::Conflict(_)), "{error:?}");
+        assert!(error.to_string().contains(".sops.yaml changed"), "{error}");
+        assert!(repo.writes.borrow().is_empty(), "nothing may be written");
+        assert_eq!(repo.text(".sops.yaml"), "edited elsewhere\n");
+        assert_eq!(repo.text("secrets/a.env"), "A");
+    }
+
+    #[test]
+    fn a_plan_without_digests_is_refused() {
+        let repo = repo();
+        let codec = MemoryCodec::new(&repo);
+        let custody = MemoryCustody::default();
+        let key = SecretKey::generate();
+
+        let error = apply(&plan(), &repo, &codec, &custody, &key).unwrap_err();
+
+        assert!(error.to_string().contains("without a digest"), "{error}");
+        assert!(repo.writes.borrow().is_empty());
     }
 
     #[test]

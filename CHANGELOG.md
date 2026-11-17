@@ -58,6 +58,11 @@
 
 ### Fixed
 
+- Mutating commands serialize on an advisory repository lock
+  (`--lock-timeout`, default 10s; a timeout exits 5), and a plan records the
+  digest of every file it touches so an input changed after the snapshot aborts
+  the apply before anything is written (exit 5). Writes fsync the temp file and
+  the parent directory around the rename, and a CRLF `.sops.yaml` stays CRLF.
 - Mutating commands are transactional: `exec::apply` backs up every file a plan
   touches and restores them when a step fails, so a failed `grant`, `revoke`,
   `rotate`, or `set` leaves the repository as it was. A restore that cannot

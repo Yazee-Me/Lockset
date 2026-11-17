@@ -39,6 +39,8 @@ impl Repo for FsRepo {
     }
 
     fn write(&self, id: &PathId, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+
         let path = self.resolve(id);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -49,14 +51,33 @@ impl Repo for FsRepo {
             path.file_name().and_then(|n| n.to_str()).unwrap_or("tmp"),
             std::process::id()
         ));
-        std::fs::write(&tmp, bytes)
-            .map_err(|e| Error::failed(format!("cannot write {}: {e}", tmp.display())))?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            use std::os::unix::fs::OpenOptionsExt;
+            // Created private, so a rewrite never widens the mode of a secret.
+            options.mode(0o600);
         }
-        std::fs::rename(&tmp, &path).map_err(|e| Error::failed(format!("cannot replace {id}: {e}")))
+        let mut file = options
+            .open(&tmp)
+            .map_err(|e| Error::failed(format!("cannot write {}: {e}", tmp.display())))?;
+        file.write_all(bytes)
+            .map_err(|e| Error::failed(format!("cannot write {}: {e}", tmp.display())))?;
+        // The bytes must be on disk before the rename can be observed.
+        file.sync_all()
+            .map_err(|e| Error::failed(format!("cannot flush {}: {e}", tmp.display())))?;
+        drop(file);
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| Error::failed(format!("cannot replace {id}: {e}")))?;
+        // The rename itself must be durable as well.
+        #[cfg(unix)]
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)
+                .and_then(|dir| dir.sync_all())
+                .map_err(|e| Error::failed(format!("cannot flush {}: {e}", parent.display())))?;
+        }
+        Ok(())
     }
 }
 

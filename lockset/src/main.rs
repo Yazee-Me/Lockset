@@ -65,6 +65,7 @@ fn run() -> Result<u8> {
     let cli = Cli::parse();
     plan_json(&cli)?;
     let context = wiring::Context::detect(&cli)?;
+    let _lock = wiring::mutation_lock(&cli, &context)?;
 
     match &cli.command {
         Command::Status => {
@@ -386,6 +387,7 @@ fn set(
         name: name.to_owned(),
         value: SecretValue::new(value),
     });
+    plan.expect(&snapshot.digests);
     if cli.dry_run {
         render::plan(&plan, true, cli.json)?;
         return Ok(0);

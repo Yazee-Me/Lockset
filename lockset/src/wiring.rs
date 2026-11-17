@@ -1,14 +1,16 @@
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{bail, Context as AnyhowContext, Result};
 use lockset_core::sopsfile::SopsFile;
 use lockset_core::{meta, Custody, IdentityView, PathId, Repo, SecretKey, Snapshot};
 use lockset_tools::custody::{EnvCustody, FileCustody, KeyringCustody, UnconfiguredCustody};
 use lockset_tools::fs_repo::FsRepo;
+use lockset_tools::lock::Lock;
 use lockset_tools::sops::SopsCodec;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Command};
 use crate::usage;
 
 pub const DEFAULT_KEYCHAIN_ITEM: &str = "lockset-age-key";
@@ -116,15 +118,44 @@ fn current_user() -> String {
         .unwrap_or_else(|_| "lockset".to_owned())
 }
 
+/// Hold the repository lock while a command that writes runs. A dry run or a
+/// read-only command takes nothing.
+pub fn mutation_lock(cli: &Cli, context: &Context) -> Result<Option<Lock>> {
+    if cli.dry_run || !writes(&cli.command) {
+        return Ok(None);
+    }
+    Ok(Some(Lock::acquire(
+        &context.root,
+        Duration::from_secs(cli.lock_timeout),
+    )?))
+}
+
+/// Commands that change repository files; custody and child processes do not.
+fn writes(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Set { .. }
+            | Command::Rotate { .. }
+            | Command::Grant { .. }
+            | Command::Revoke { .. }
+            | Command::Person { .. }
+    )
+}
+
 pub fn snapshot(context: &Context) -> Result<Snapshot> {
-    let sops_text = String::from_utf8(context.repo.read(&PathId::parse(".sops.yaml")?)?)
-        .context(".sops.yaml is not UTF-8")?;
+    let mut digests = std::collections::BTreeMap::new();
+
+    let sops_path = PathId::parse(".sops.yaml")?;
+    let sops_bytes = context.repo.read(&sops_path)?;
+    digests.insert(sops_path, lockset_core::digest(&sops_bytes));
+    let sops_text = String::from_utf8(sops_bytes).context(".sops.yaml is not UTF-8")?;
     let sops = SopsFile::parse(&sops_text)?;
 
     let mut payloads = Vec::new();
     for id in context.repo.list(&PathId::parse("secrets")?)? {
-        let text = String::from_utf8(context.repo.read(&id)?)
-            .with_context(|| format!("{id} is not UTF-8"))?;
+        let bytes = context.repo.read(&id)?;
+        digests.insert(id.clone(), lockset_core::digest(&bytes));
+        let text = String::from_utf8(bytes).with_context(|| format!("{id} is not UTF-8"))?;
         payloads.push(meta::parse(id, &text)?);
     }
 
@@ -146,7 +177,8 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
         Err(error) => (None, Some(error.to_string())),
     };
 
-    let mut snapshot = Snapshot::new(context.root.display().to_string(), sops, payloads, identity);
+    let mut snapshot = Snapshot::new(context.root.display().to_string(), sops, payloads, identity)
+        .with_digests(digests);
     if let Some(error) = identity_error {
         snapshot = snapshot.identity_unavailable(error);
     }

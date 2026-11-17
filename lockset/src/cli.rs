@@ -27,6 +27,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Seconds to wait for another lockset holding the repository lock
+    #[arg(long, global = true, value_name = "SECS", default_value_t = 10)]
+    pub lock_timeout: u64,
+
     #[command(subcommand)]
     pub command: Command,
 }

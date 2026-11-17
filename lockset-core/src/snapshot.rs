@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::meta::PayloadMeta;
 use crate::model::{CustodyKind, Label, PathId, PubKey};
 use crate::sopsfile::SopsFile;
@@ -21,6 +23,10 @@ pub struct Snapshot {
     /// Why custody failed instead of simply holding nothing. Reports stay
     /// usable; `check` records this as a finding.
     pub identity_error: Option<String>,
+    /// Digest of every file read into this snapshot, keyed by path. A plan
+    /// copies the digests of the files it touches, so an apply can tell that an
+    /// input changed in between.
+    pub digests: BTreeMap<PathId, String>,
 }
 
 impl Snapshot {
@@ -36,7 +42,14 @@ impl Snapshot {
             payloads,
             identity,
             identity_error: None,
+            digests: BTreeMap::new(),
         }
+    }
+
+    /// Attach the digests of the files this snapshot was built from.
+    pub fn with_digests(mut self, digests: BTreeMap<PathId, String>) -> Self {
+        self.digests = digests;
+        self
     }
 
     /// Record the custody failure behind a missing identity.

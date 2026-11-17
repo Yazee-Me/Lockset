@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Serialize, Serializer};
@@ -64,11 +65,28 @@ pub enum Change {
     },
 }
 
+impl Change {
+    /// The file this change mutates, if any.
+    pub fn path(&self) -> Option<&PathId> {
+        match self {
+            Change::WriteFile { path, .. } => Some(path),
+            Change::UpdateKeys { payload } => Some(payload),
+            Change::RotateDataKey { payload } => Some(payload),
+            Change::SetValue { payload, .. } => Some(payload),
+            Change::StoreKey { .. } | Change::ForgetKey { .. } => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Plan {
     pub changes: Vec<Change>,
     pub notes: Vec<String>,
     pub warnings: Vec<String>,
+    /// Digest of every file this plan touches, taken when the plan was built.
+    /// `exec::apply` refuses to write a file whose bytes have changed since.
+    #[serde(skip)]
+    pub expected: BTreeMap<PathId, String>,
 }
 
 impl Plan {
@@ -86,6 +104,16 @@ impl Plan {
 
     pub fn warn(&mut self, warning: impl Into<String>) {
         self.warnings.push(warning.into());
+    }
+
+    /// Record the digests of the files this plan touches so the apply can
+    /// refuse input that changed after the snapshot.
+    pub fn expect(&mut self, digests: &BTreeMap<PathId, String>) {
+        for path in self.changes.iter().filter_map(Change::path) {
+            if let Some(digest) = digests.get(path) {
+                self.expected.insert(path.clone(), digest.clone());
+            }
+        }
     }
 }
 

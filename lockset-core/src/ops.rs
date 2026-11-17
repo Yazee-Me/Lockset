@@ -344,6 +344,7 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
             request.label
         ));
     }
+    plan.expect(&snapshot.digests);
     Ok(plan)
 }
 
@@ -378,6 +379,7 @@ pub fn rotate(snapshot: &Snapshot, only: Option<&[PathId]>) -> Result<crate::pla
         "rotate the data key of {} payload(s); values are unchanged",
         targets.len()
     ));
+    plan.expect(&snapshot.digests);
     Ok(plan)
 }
 
@@ -507,6 +509,7 @@ pub fn revoke(snapshot: &Snapshot, request: &RevokeRequest) -> Result<crate::pla
             .collect::<Vec<_>>()
             .join(", ")
     ));
+    plan.expect(&snapshot.digests);
     Ok(plan)
 }
 

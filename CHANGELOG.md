@@ -29,12 +29,26 @@
 - `lockset run --clean-env` gives the command only `PATH`, `HOME`, `TMPDIR`, and
   `LANG` from the parent plus the payload values, for jobs that would otherwise
   inherit an unrelated CI secret.
+- `--quiet`, `--verbose`, and `RUST_LOG` select the stderr level: notes and
+  warnings show by default, `--quiet` keeps only errors, and `--verbose` (or
+  `RUST_LOG=debug`) adds the repository root, custody kind, and sops binary.
+  A flag wins over `RUST_LOG`; `--quiet` and `--verbose` conflict (exit 2).
+  stdout is unchanged by any of them.
+- `lockset set --if-absent` stores nothing when the payload already gives the
+  key a non-empty value, so a retried step cannot overwrite a configured
+  secret. An empty value counts as absent, and reading the payload needs the
+  identity even for `--dry-run`.
 
 ### Changed
 
 - `lockset run` hands the child its own exit status: on Unix the CLI `exec`s the
   command, so its exit code and terminating signals pass through untouched;
   elsewhere the wait status is propagated, mapping a signal to `128 + signal`.
+- A sops failure now keeps every stderr line, indented under an error that names
+  the payload, with the identity and any `AGE-SECRET-KEY-…` token replaced by
+  `[redacted]`. Previously only the first line survived, and a mutation that
+  rolled back cleanly reported exit 1: an external-tool failure now keeps exit
+  4.
 
 ### Security
 

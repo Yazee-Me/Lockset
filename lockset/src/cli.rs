@@ -28,6 +28,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Suppress notes and warnings on stderr; data on stdout is unchanged
+    #[arg(long, global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
+
+    /// Show debug diagnostics on stderr; wins over RUST_LOG
+    #[arg(long, global = true)]
+    pub verbose: bool,
+
     /// Seconds to wait for another lockset holding the repository lock
     #[arg(long, global = true, value_name = "SECS", default_value_t = 10)]
     pub lock_timeout: u64,
@@ -107,6 +115,9 @@ pub enum Command {
         /// Store an empty value; empty input is refused without this flag
         #[arg(long = "allow-empty")]
         allow_empty: bool,
+        /// Store nothing when the payload already gives the key a non-empty value
+        #[arg(long = "if-absent")]
+        if_absent: bool,
     },
     /// Rotate the data key (and re-encrypt every value) of the selected payloads
     Rotate {

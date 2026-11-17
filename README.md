@@ -38,6 +38,9 @@ Every mutating command prints its plan; `--dry-run` stops there.
 
 - `sops` 3.13 or newer on `PATH` (override with `--sops <path>` or
   `LOCKSET_SOPS`). Mutations check the binary and its version before they start.
+  A sops failure names the payload and keeps every stderr line, indented under
+  the error; the identity is replaced with `[redacted]` first, so a tool that
+  echoes its environment cannot print the key into a CI log.
 - An age identity: `LOCKSET_AGE_KEY` when set, the keychain item
   `lockset-age-key`, or an explicit `--custody file:<path>`. Give `file:` an
   absolute path outside the repository — a mounted secret such as
@@ -76,6 +79,7 @@ lockset set NEW_KEY --payload secrets/dev.env      # hidden prompt
 printf '%s' "$NEW_KEY" | lockset set NEW_KEY --payload secrets/dev.env --stdin
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY
 lockset set NEW_KEY --payload secrets/dev.env --value-file /run/secrets/new-key
+lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY --if-absent  # keep a value already set
 lockset --dry-run --json set NEW_KEY --payload secrets/dev.env   # plan as JSON, value redacted
 lockset export --payload secrets/prod/deploy.env --format dotenv
 lockset grant age1... --label dev-alice
@@ -89,6 +93,36 @@ mise run test        # cargo test --workspace
 mise run build       # release build of the CLI
 mise run install     # link target/release/lockset into ~/.local/bin
 ```
+
+## Diagnostics
+
+Data goes to stdout; notes, warnings, and debug lines go to stderr. A pipeline
+therefore sees only the document (`status --json | jq .`) or the values
+(`eval "$(lockset export …)"`), and can silence the rest.
+
+| Level | Carries | Shown by |
+| --- | --- | --- |
+| error | the `error:` line that ends a failing run | always |
+| warn | plan warnings, the export secret-material warning | default, `RUST_LOG=warn` and above |
+| info | plan notes, the `--if-absent` skip | default, `RUST_LOG=info` and above |
+| debug | repository root, custody kind, sops binary | `--verbose`, `RUST_LOG=debug` and above |
+
+`--quiet` keeps only errors and `--verbose` adds debug lines; either flag wins
+over `RUST_LOG`, which otherwise selects the level (default `info`). The two
+flags conflict (exit 2).
+
+```sh
+lockset status | jq '.drift'                  # stdout carries the document
+lockset --quiet export --payload secrets/dev.env   # values only; the warning is silenced
+lockset --verbose check                       # stderr names the repository, custody, and sops
+RUST_LOG=debug lockset check                  # same, without the flag
+```
+
+`set --if-absent` stores nothing when the payload already gives the key a
+non-empty value, so a retried pipeline step cannot overwrite a configured
+secret; an empty value counts as absent, and the note that says so is on stderr.
+Reading the payload needs the identity, so `--if-absent` asks for it even with
+`--dry-run`.
 
 ## Machine-readable output
 
@@ -163,7 +197,9 @@ Pipelines can gate on the exit code; `lockset --help` prints the same table.
 | 5 | conflict or lock: an input changed, another process holds the repository |
 | 6 | partial apply: a mutation could not be undone; the message names the files |
 
-`status --strict` exits 1 on drift, empty values, a missing identity, or
+A failing external tool keeps code 4 even when the mutation rolled back
+cleanly; a rollback that cannot restore a file is 6. `status --strict` exits 1
+on drift, empty values, a missing identity, or
 unreadable payloads; without `--strict` it always reports and exits 0. `check`
 covers identity presence, unreadable payloads, ciphertext, plaintext, empty
 values, label drift, admin coverage, and a decrypt proof for whatever identity
@@ -200,6 +236,10 @@ this machine has — no particular label is required.
   self-referential link cannot duplicate or loop the inventory. A payload that
   cannot be read or parsed is a finding with its path and error (`status`,
   `check`), and the remaining payloads are still reported and rotated.
+- Sops output reaches the error message whole, not just its first line: a
+  failure after several lines of context still names the cause. Redaction runs
+  before the text is formatted, so neither the key handed over nor any
+  `AGE-SECRET-KEY-…` token sops prints survives into a CI log.
 - Writes are durable: the temp file is fsynced before the rename and the parent
   directory after it, and a CRLF `.sops.yaml` is rewritten with CRLF.
 - Paths are `PathId` values parsed relative to the repository root, so no

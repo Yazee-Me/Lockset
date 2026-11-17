@@ -28,9 +28,13 @@ impl Context {
         let root = find_root(cli.repo.as_deref())?;
         let interactive = std::io::stdin().is_terminal();
         let custody = make_custody(cli.custody.as_deref(), &root, interactive)?;
+        let codec = SopsCodec::new(&root, sops_bin(cli));
+        log::debug!("repository root {}", root.display());
+        log::debug!("custody {}", custody.kind());
+        log::debug!("sops {}", codec.bin());
         Ok(Self {
             repo: FsRepo::new(&root),
-            codec: SopsCodec::new(&root, sops_bin(cli)),
+            codec,
             root,
             custody,
         })

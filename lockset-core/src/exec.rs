@@ -169,9 +169,13 @@ fn undo(
         }
     }
     if unrestored.is_empty() {
-        return Error::failed(format!(
-            "{cause}; nothing was changed (the repository was restored)"
-        ));
+        let message = format!("{cause}; nothing was changed (the repository was restored)");
+        // The rollback succeeded, so the failure keeps its class: an external
+        // tool still exits 4 and a custody error 3, not the generic 1.
+        return match cause {
+            Error::Tool(_) => Error::tool(message),
+            _ => Error::failed(message),
+        };
     }
     Error::partial(format!(
         "{cause}; the mutation stopped part-way and could not restore {}; recover those \
@@ -274,6 +278,8 @@ mod tests {
         repo: &'a MemoryRepo,
         calls: RefCell<usize>,
         fail_on_call: RefCell<Option<usize>>,
+        /// Report the failure as the external tool, as sops would.
+        tool_failure: bool,
     }
 
     impl<'a> MemoryCodec<'a> {
@@ -282,6 +288,7 @@ mod tests {
                 repo,
                 calls: RefCell::new(0),
                 fail_on_call: RefCell::new(None),
+                tool_failure: false,
             }
         }
 
@@ -293,7 +300,12 @@ mod tests {
             let mut calls = self.calls.borrow_mut();
             *calls += 1;
             if *self.fail_on_call.borrow() == Some(*calls) {
-                return Err(Error::failed(format!("sops {what} {id} failed")));
+                let message = format!("sops {what} {id} failed");
+                return Err(if self.tool_failure {
+                    Error::tool(message)
+                } else {
+                    Error::failed(message)
+                });
             }
             drop(calls);
             self.repo.put(id, written);
@@ -442,6 +454,25 @@ mod tests {
             );
             assert_untouched(&repo);
         }
+    }
+
+    #[test]
+    fn a_tool_failure_keeps_its_class_after_a_clean_rollback() {
+        let repo = repo();
+        let mut codec = MemoryCodec::new(&repo);
+        codec.tool_failure = true;
+        codec.fail_on_call(2);
+        let custody = MemoryCustody::default();
+        let key = SecretKey::generate();
+
+        let error = apply(&sealed(&repo), &repo, &codec, &custody, &key).unwrap_err();
+
+        assert!(matches!(error, Error::Tool(_)), "{error:?}");
+        assert!(
+            error.to_string().contains("the repository was restored"),
+            "{error}"
+        );
+        assert_untouched(&repo);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod cli;
+mod diag;
 mod input;
 mod render;
 mod usage;
@@ -62,6 +63,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<u8> {
     let cli = Cli::parse();
+    diag::init(cli.quiet, cli.verbose);
     json_requested(&cli)?;
     let context = wiring::Context::detect(&cli)?;
     let _lock = wiring::mutation_lock(&cli, &context)?;
@@ -104,11 +106,13 @@ fn run() -> Result<u8> {
             from_env,
             value_file,
             allow_empty,
+            if_absent,
         } => set(
             &context,
             &cli,
             key,
             payload,
+            *if_absent,
             &input::ValueSource {
                 stdin: *stdin,
                 from_env: from_env.as_deref(),
@@ -395,7 +399,7 @@ fn export(
     }
     let key = context.require_key()?;
     let values = exported_payload(ops::env_for(&context.codec, &ids, &key, duplicates)?, false)?;
-    eprintln!("warning: the exported values are secret material; mask them in CI logs");
+    log::warn!("the exported values are secret material; mask them in CI logs");
     print!("{}", render::export(format, &values)?);
     Ok(0)
 }
@@ -604,8 +608,8 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
 
             let covered = snapshot.payloads_with(&public);
             if covered.is_empty() {
-                eprintln!("warning: {public} is not a recipient of any payload yet");
-                eprintln!("  ask an operator: lockset grant {public} --label dev-<name>");
+                log::warn!("{public} is not a recipient of any payload yet");
+                log::warn!("ask an operator: lockset grant {public} --label dev-<name>");
                 return Ok(1);
             }
             for payload in &covered {
@@ -688,6 +692,7 @@ fn set(
     cli: &Cli,
     name: &str,
     payload: &str,
+    if_absent: bool,
     source: &input::ValueSource<'_>,
 ) -> Result<u8> {
     if !lockset_core::meta::is_name(name) {
@@ -703,6 +708,10 @@ fn set(
             )));
         }
         return Err(usage::error(format!("no such payload: {payload}")));
+    }
+    if if_absent && key_is_set(context, &id, name)? {
+        log::info!("{name} already has a value in {id}; nothing to do (--if-absent)");
+        return Ok(0);
     }
     let value = input::read_value(source)?;
 
@@ -729,6 +738,18 @@ fn set(
         println!("{line}");
     }
     Ok(0)
+}
+
+/// Whether the payload already gives `name` a non-empty value. `--if-absent`
+/// answers that with the payload itself, so it needs the identity even for
+/// `--dry-run`; an empty value counts as absent.
+fn key_is_set(context: &wiring::Context, id: &PathId, name: &str) -> Result<bool> {
+    let key = context.require_key()?;
+    let plain = context.codec.decrypt(id, &key)?;
+    let text = String::from_utf8_lossy(&plain);
+    Ok(lockset_core::dotenv::parse(&text)
+        .iter()
+        .any(|(key, value)| key == name && !value.is_empty()))
 }
 
 fn rotate(context: &wiring::Context, cli: &Cli, all: bool, payload: &[String]) -> Result<u8> {

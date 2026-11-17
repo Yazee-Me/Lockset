@@ -170,10 +170,10 @@ pub fn plan(plan: &Plan, dry_run: bool, json: bool) -> Result<()> {
         return Ok(());
     }
     for note in &plan.notes {
-        eprintln!("{note}");
+        log::info!("{note}");
     }
     for warning in &plan.warnings {
-        eprintln!("warning: {warning}");
+        log::warn!("{warning}");
     }
     if dry_run {
         if plan.changes.is_empty() {

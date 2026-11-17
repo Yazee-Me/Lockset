@@ -50,6 +50,40 @@ pub fn parse_version(text: &str) -> Option<Version> {
     None
 }
 
+/// The prefix every age identity starts with.
+const SECRET_PREFIX: &str = "AGE-SECRET-KEY-";
+
+/// Indent each line under the error, or say the tool was silent.
+fn indent(text: &str) -> String {
+    if text.trim().is_empty() {
+        return " no output".to_owned();
+    }
+    text.lines().map(|line| format!("\n  {line}")).collect()
+}
+
+/// Replace the identity this codec holds and any `AGE-SECRET-KEY-…` token with
+/// `[redacted]`: a tool that echoes its environment must not print the key into
+/// a CI log.
+fn redact(text: &str, key: Option<&SecretKey>) -> String {
+    let text = match key {
+        Some(key) => text.replace(key.expose(), "[redacted]"),
+        None => text.to_owned(),
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find(SECRET_PREFIX) {
+        out.push_str(&rest[..start]);
+        out.push_str("[redacted]");
+        let tail = &rest[start + SECRET_PREFIX.len()..];
+        let end = tail
+            .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit()))
+            .unwrap_or(tail.len());
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The sops CLI, wrapped. The key is handed over through the child
 /// environment only; it never reaches argv or a file.
 pub struct SopsCodec {
@@ -98,11 +132,12 @@ impl SopsCodec {
             return Ok(version);
         }
         if !output.status.success() {
-            let detail = text.lines().next().unwrap_or("no output").trim();
+            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::tool(format!(
-                "sops (`{}`) --version failed: {detail}; install sops >= {MIN_VERSION} \
+                "sops (`{}`) --version failed:{}; install sops >= {MIN_VERSION} \
                  or pass --sops <path>",
-                self.bin
+                self.bin,
+                indent(&redact(stderr.trim_end(), None))
             )));
         }
         Err(Error::tool(format!(
@@ -158,14 +193,14 @@ impl SopsCodec {
             .map_err(|e| Error::tool(format!("cannot run {}: {e}", self.bin)))
     }
 
-    fn ok(&self, output: &Output, what: &str) -> Result<()> {
+    fn ok(&self, output: &Output, what: &str, key: &SecretKey) -> Result<()> {
         if output.status.success() {
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(Error::tool(format!(
-            "sops {what} failed: {}",
-            stderr.trim().lines().next().unwrap_or("no output")
+            "sops {what} failed:{}",
+            indent(&redact(stderr.trim_end(), Some(key)))
         )))
     }
 
@@ -179,19 +214,19 @@ impl SopsCodec {
 impl Codec for SopsCodec {
     fn decrypt(&self, id: &PathId, key: &SecretKey) -> Result<Vec<u8>> {
         let output = self.run(&["-d", id.as_str()], key)?;
-        self.ok(&output, &format!("decrypt {id}"))?;
+        self.ok(&output, &format!("decrypt {id}"), key)?;
         Ok(output.stdout)
     }
 
     fn rewrap(&self, id: &PathId, key: &SecretKey) -> Result<()> {
         let output = self.run(&["updatekeys", "-y", id.as_str()], key)?;
-        self.ok(&output, &format!("updatekeys {id}"))?;
+        self.ok(&output, &format!("updatekeys {id}"), key)?;
         self.verify(id, key)
     }
 
     fn rekey(&self, id: &PathId, key: &SecretKey) -> Result<()> {
         let output = self.run(&["rotate", "-i", id.as_str()], key)?;
-        self.ok(&output, &format!("rotate {id}"))?;
+        self.ok(&output, &format!("rotate {id}"), key)?;
         self.verify(id, key)
     }
 
@@ -225,7 +260,7 @@ impl Codec for SopsCodec {
         let output = child
             .wait_with_output()
             .map_err(|e| Error::tool(format!("sops set failed: {e}")))?;
-        self.ok(&output, &format!("set {name} in {id}"))?;
+        self.ok(&output, &format!("set {name} in {id}"), key)?;
 
         // Prove the value landed and that the rest of the file still opens.
         let plain = self.decrypt(id, key)?;
@@ -249,6 +284,34 @@ mod tests {
     use std::process::Command;
 
     use super::*;
+
+    #[test]
+    fn an_identity_in_the_output_is_redacted() {
+        let key = SecretKey::generate();
+        let text = format!(
+            "decrypting with {} failed\nretry with AGE-SECRET-KEY-1ABCDEFGHIJ, or rotate\n",
+            key.expose()
+        );
+
+        let redacted = redact(&text, Some(&key));
+
+        assert!(!redacted.contains(key.expose()), "{redacted}");
+        assert!(!redacted.contains("1ABCDEFGHIJ"), "{redacted}");
+        assert_eq!(redacted.matches("[redacted]").count(), 2, "{redacted}");
+        assert!(
+            redacted.contains("decrypting with [redacted] failed"),
+            "{redacted}"
+        );
+    }
+
+    #[test]
+    fn an_error_keeps_every_stderr_line() {
+        let detail = indent("failed to decrypt data key\nage: no identity matched");
+
+        assert!(detail.contains("  failed to decrypt data key"), "{detail}");
+        assert!(detail.contains("  age: no identity matched"), "{detail}");
+        assert_eq!(indent("  \n"), " no output");
+    }
 
     /// A parent environment that looks like a machine holding the identity
     /// plus every override sops might honour.

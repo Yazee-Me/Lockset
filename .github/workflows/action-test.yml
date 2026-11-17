@@ -57,7 +57,11 @@ jobs:
       - name: Make the fixture repository
         run: |
           tests/fixtures/action/make.sh "$RUNNER_TEMP/repo"
-          echo "LOCKSET_AGE_KEY=$(cat "$RUNNER_TEMP/repo/.identity")" >> "$GITHUB_ENV"
+          # age-keygen writes a "# public key: ..." comment first; the runner
+          # rejects anything in $GITHUB_ENV that is not NAME=value.
+          key=$(grep -m1 '^AGE-SECRET-KEY-1' "$RUNNER_TEMP/repo/.identity")
+          echo "::add-mask::$key"
+          echo "LOCKSET_AGE_KEY=$key" >> "$GITHUB_ENV"
 
       - name: A wrong checksum fails closed
         run: |

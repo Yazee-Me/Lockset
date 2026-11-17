@@ -25,6 +25,11 @@ printf 'creation_rules:\n  - path_regex: secrets/.*\\.env$\n    age: %s # admin\
     > "$work/.sops.yaml"
 printf 'TOKEN=s3cret\n' > "$work/secrets/plain.env"
 
+# The image runs as uid 10001, and a bind mount keeps host ownership on Linux
+# runners; `mktemp -d` is 0700, so the container cannot even traverse $work.
+# Docker Desktop on macOS hides this by remapping ownership.
+chmod -R a+rX "$work"
+
 echo "== the image ships a pinned sops"
 docker run --rm --entrypoint sops "$image" --version
 

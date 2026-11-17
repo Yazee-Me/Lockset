@@ -503,10 +503,27 @@ publishes a GitHub release.
 Every archive ships with `<archive>.sha256`, the release carries a combined
 `SHA256SUMS`, and each artifact has a GitHub Artifact Attestation (SLSA
 provenance) that `gh attestation verify <file> --repo Yazee-Me/Lockset` checks.
-Shell and PowerShell installers are published for each release. The release
-body is the matching `CHANGELOG.md` section, so the breaking changes — today the
-identity and sops rename — are on the release page; CI fails if that section is
-missing them.
+The release body is the matching `CHANGELOG.md` section, so the breaking
+changes — today the identity and sops rename — are on the release page; CI
+fails if that section is missing them.
+
+Install paths, all verified against the published checksums:
+
+| Source | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| `cargo binstall lockset` (crates.io + release archives) | yes | yes | yes |
+| shell installer (`lockset-installer.sh`) | yes | yes | — |
+| PowerShell installer (`lockset-installer.ps1`) | — | — | yes |
+| Homebrew formula (`lockset.rb`, attached to the release) | yes | yes | — |
+| container image | yes | — | — |
+| composite action (GitHub Actions) | yes | yes | yes |
+
+The Homebrew formula is attached to every release; install it directly with
+`brew install ./lockset.rb`, or publish it to a tap by adding `tap =
+"Yazee-Me/homebrew-tap"` to `dist-workspace.toml` once that repository exists.
+`cargo binstall` reads the `[package.metadata.binstall]` template in
+`lockset/Cargo.toml`; `scripts/check-binstall.sh` verifies it against the
+archives a tag would publish, and CI runs that check.
 
 Install without Rust:
 
@@ -544,6 +561,58 @@ mise run release:plan     # what a tag would publish (dist plan)
 mise run release:build    # the artifacts for this machine
 mise run release:verify   # checksums, unpack, run target/distrib
 ```
+
+## Publishing
+
+All three crates carry the same version and complete metadata
+(`license`, `rust-version`, `repository`, `documentation`, `readme`,
+`keywords`, `categories`), and the path dependencies name that version, so they
+are publishable in order:
+
+```sh
+cargo package --workspace --locked   # what CI checks: metadata and tarball contents
+cargo publish -p lockset-core
+cargo publish -p lockset-tools
+cargo publish -p lockset
+```
+
+`lockset-core` and `lockset-tools` are published because the CLI depends on
+them; `lockset-core` stays I/O-free and is safe to use as a library.
+
+### Versioning and release notes
+
+Versions are bumped with [cargo-release](https://github.com/crate-ci/cargo-release)
+using the `[workspace.metadata.release]` configuration in the root
+`Cargo.toml`:
+
+```sh
+cargo release patch --execute    # or minor/major: bumps, tags v<version>, pushes
+```
+
+That opens the next `CHANGELOG.md` section from `Unreleased` and tags
+`v<version>`, which starts the cargo-dist release, the container image, and the
+action's install. The `Unreleased` section is the contract for those notes: keep
+the breaking-change summary at its top (CI fails when a version's section lacks
+it).
+
+## Signing
+
+The release binaries and installers are **not** code-signed or notarized:
+
+- macOS: no Developer ID notarization, so Gatekeeper treats the downloaded
+  binary as unsigned. Files fetched with `curl`/installers carry no quarantine
+  attribute and run normally; a file downloaded through a browser may need
+  `xattr -d com.apple.quarantine <file>`. Enabling notarization needs an Apple
+  Developer ID certificate and a cargo-dist signing job.
+- Windows: no Authenticode signature, so SmartScreen may warn on a downloaded
+  archive. Enabling it needs a signing service (Azure Trusted Signing or
+  SSL.com, both configurable in cargo-dist via
+  `azure-windows-sign`/`ssldotcom-windows-sign`).
+
+Until then, verify what you download: the `.sha256`/`SHA256SUMS` checksums, the
+GitHub artifact attestation (`gh attestation verify <file> --repo
+Yazee-Me/Lockset`), and — when the release publishes them — the minisign
+signatures described under Releases.
 
 ## Design notes
 

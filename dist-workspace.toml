@@ -3,13 +3,14 @@ members = ["cargo:."]
 
 # cargo-dist: the release pipeline. `dist generate` writes the GitHub workflow;
 # `dist plan` shows what a tag would produce. Targets follow the support matrix
-# in LS-30; installers are the self-contained shell/powershell scripts, which
-# need no extra hosting (a Homebrew tap is deliberately not configured: it needs
-# a `homebrew-tap` repository, see README "Releases").
+# in LS-30. The shell and powershell installers are self-contained; the Homebrew
+# formula is attached to every release as `lockset.rb`. Publishing the formula
+# needs a `Yazee-Me/homebrew-tap` repository, so `tap` is not set here — a user
+# installs the attached formula with `brew install ./lockset.rb` (see README).
 [dist]
 cargo-dist-version = "0.34.0"
 ci = ["github"]
-installers = ["shell", "powershell"]
+installers = ["shell", "powershell", "homebrew"]
 targets = [
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",

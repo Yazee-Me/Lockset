@@ -5,9 +5,13 @@ members = ["lockset-core", "lockset-tools", "lockset"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# The toolchain CI proves the workspace builds with (see the msrv job).
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Yazee-Me/Lockset"
 homepage = "https://github.com/Yazee-Me/Lockset"
+keywords = ["secrets", "sops", "age", "environment", "ci"]
+categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 age = "0.12"
@@ -25,3 +29,11 @@ keyring = { version = "4", features = ["v1"] }
 
 [profile.dist]
 inherits = "release"
+
+# `cargo release patch --execute` bumps every crate (they share a version),
+# opens the CHANGELOG's next version section from "Unreleased", commits, and
+# tags v<version>; the tag then drives the cargo-dist release.
+[workspace.metadata.release]
+shared-version = true
+tag-name = "v{{version}}"
+pre-release-commit-message = "release: {{version}}"

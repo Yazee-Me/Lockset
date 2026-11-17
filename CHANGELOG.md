@@ -61,6 +61,22 @@
 
 ### Added
 
+- **Package metadata, licenses, and install paths are complete.** `LICENSE-MIT`
+  and `LICENSE-APACHE` ship at the repository root and in every crate; each
+  crate declares `rust-version` (1.88, checked in CI), `repository`,
+  `documentation`, `readme`, `keywords`, `categories`, and the path
+  dependencies name the shared version, so `cargo package --workspace` and
+  `cargo publish` work in order (core, tools, CLI). `cargo binstall` metadata
+  points at the release archives (verified against the cargo-dist plan by
+  `scripts/check-binstall.sh` in CI), the cargo-dist release now also attaches a
+  Homebrew formula (`lockset.rb`), and `[workspace.metadata.release]` plus a
+  package-level changelog replacement drive `cargo release patch/minor` (bump,
+  open the next `CHANGELOG.md` section, tag `v<version>`).
+- Signing is documented as a known limitation: macOS binaries are not notarized
+  and Windows binaries are unsigned, with the verification alternatives
+  (checksums, artifact attestations, minisign) and the cargo-dist signing hooks
+  named for when certificates exist.
+
 - **A composite GitHub action makes CI first class.** `uses:
   Yazee-Me/Lockset@v0.1.0` installs that release, verifies its published
   `.sha256` (and the GitHub artifact attestation when `gh` is available), and

@@ -58,19 +58,6 @@ mise run build       # release build of the CLI
 mise run install     # link target/release/lockset into ~/.local/bin
 ```
 
-## Migrating from yzs
-
-Rename `YAZEE_AGE_KEY` to `LOCKSET_AGE_KEY`, and `YZS_SOPS` to `LOCKSET_SOPS`.
-For one release the identity is also read from the old names, with a
-deprecation warning on stderr: `YAZEE_AGE_KEY` when `LOCKSET_AGE_KEY` is unset,
-and the `yazee-age-key` keychain item when `lockset-age-key` holds nothing.
-Writes (`key import`) always use the new names, and `key forget` removes the old
-keychain item too, so the deprecated copy does not outlive the command.
-
-To finish the keychain migration, run `lockset key import` with the same age
-identity; `LOCKSET_AGE_KEY` and `--custody file:<path>` do not need any change
-beyond the variable name.
-
 ## Design notes
 
 - `lockset-core` never spawns a process, reads the environment, or touches the

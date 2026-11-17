@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context as AnyhowContext, Result};
 use lockset_core::sopsfile::SopsFile;
 use lockset_core::{meta, Custody, IdentityView, PathId, Repo, SecretKey, Snapshot};
-use lockset_tools::custody::{EnvCustody, FallbackCustody, FileCustody, KeyringCustody};
+use lockset_tools::custody::{EnvCustody, FileCustody, KeyringCustody};
 use lockset_tools::fs_repo::FsRepo;
 use lockset_tools::sops::SopsCodec;
 
@@ -11,8 +11,6 @@ use crate::cli::Cli;
 
 pub const DEFAULT_KEYCHAIN_ITEM: &str = "lockset-age-key";
 pub const KEY_ENV: &str = "LOCKSET_AGE_KEY";
-const LEGACY_KEYCHAIN_ITEM: &str = "yazee-age-key";
-const LEGACY_KEY_ENV: &str = "YAZEE_AGE_KEY";
 
 pub struct Context {
     pub root: PathBuf,
@@ -79,7 +77,7 @@ fn make_custody(spec: Option<&str>) -> Box<dyn Custody> {
 }
 
 fn default_custody() -> Box<dyn Custody> {
-    if env_is_set(KEY_ENV) || env_is_set(LEGACY_KEY_ENV) {
+    if env_is_set(KEY_ENV) {
         env_custody()
     } else {
         keyring_custody()
@@ -90,41 +88,19 @@ fn env_is_set(name: &str) -> bool {
     std::env::var(name).is_ok_and(|value| !value.trim().is_empty())
 }
 
-/// One release of read compatibility: the current name wins, the old one is
-/// read with a deprecation notice, and writes always land in the current one.
 fn env_custody() -> Box<dyn Custody> {
-    Box::new(FallbackCustody::new(
-        Box::new(EnvCustody::new(KEY_ENV)),
-        Box::new(EnvCustody::new(LEGACY_KEY_ENV)),
-        format!("{LEGACY_KEY_ENV} is deprecated; rename it to {KEY_ENV}"),
-    ))
+    Box::new(EnvCustody::new(KEY_ENV))
 }
 
 fn keyring_custody() -> Box<dyn Custody> {
-    Box::new(FallbackCustody::new(
-        Box::new(KeyringCustody::new(DEFAULT_KEYCHAIN_ITEM, current_user())),
-        Box::new(KeyringCustody::new(LEGACY_KEYCHAIN_ITEM, legacy_user())),
-        format!(
-            "the key is in the deprecated keychain item {LEGACY_KEYCHAIN_ITEM}; \
-             run `lockset key import` to store it as {DEFAULT_KEYCHAIN_ITEM}"
-        ),
-    ))
+    Box::new(KeyringCustody::new(DEFAULT_KEYCHAIN_ITEM, current_user()))
 }
 
 fn current_user() -> String {
-    user("lockset")
-}
-
-fn legacy_user() -> String {
-    // The imported CLI fell back to "yzs" when no user variable was set.
-    user("yzs")
-}
-
-fn user(fallback: &str) -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
         .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| fallback.to_owned())
+        .unwrap_or_else(|_| "lockset".to_owned())
 }
 
 pub fn snapshot(context: &Context) -> Result<Snapshot> {
@@ -158,4 +134,52 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
         payloads,
         identity,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use lockset_core::CustodyKind;
+
+    use super::*;
+
+    /// Sets one variable for the test and puts the previous value back on drop.
+    struct SetVar {
+        name: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl SetVar {
+        fn new(name: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self { name, previous }
+        }
+    }
+
+    impl Drop for SetVar {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+
+    fn default_kind() -> CustodyKind {
+        default_custody().kind()
+    }
+
+    #[test]
+    fn default_custody_selects_on_the_current_variable_only() {
+        let key = SecretKey::generate();
+        let guard = SetVar::new(KEY_ENV, key.expose());
+        assert_eq!(default_kind(), CustodyKind::Env);
+        drop(guard);
+
+        let guard = SetVar::new(KEY_ENV, "   ");
+        assert_eq!(default_kind(), CustodyKind::Keyring);
+        drop(guard);
+    }
 }

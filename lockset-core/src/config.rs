@@ -74,6 +74,21 @@ impl Default for Config {
 impl Config {
     /// Parse and validate the file. Every error names the field, so a typo is
     /// actionable and exits 2.
+    ///
+    /// ```
+    /// use lockset_core::config::Config;
+    ///
+    /// let config = Config::parse(
+    ///     "[repo]\ndefault_payloads = [\"secrets/dev.env\"]\n[codec]\nmin_version = \"3.14.0\"\n",
+    /// )?;
+    /// assert_eq!(config.default_payloads.len(), 1);
+    /// assert_eq!(config.codec.min_version.to_string(), "3.14.0");
+    ///
+    /// // A typo names the field instead of silently changing behaviour.
+    /// let error = Config::parse("[repo]\nbogus = 1\n").unwrap_err();
+    /// assert!(error.to_string().contains("bogus"));
+    /// # Ok::<(), lockset_core::Error>(())
+    /// ```
     pub fn parse(text: &str) -> Result<Self> {
         let raw: Raw = toml::from_str(text)
             .map_err(|error| Error::invalid(format!("not valid TOML: {error}")))?;

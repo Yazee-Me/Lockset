@@ -113,6 +113,24 @@ pub struct SopsFile {
 }
 
 impl SopsFile {
+    /// # Example
+    ///
+    /// ```
+    /// use lockset_core::sopsfile::SopsFile;
+    ///
+    /// let text = r#"creation_rules:
+    /// - path_regex: secrets/.*\.env$
+    ///   age: age1p243ylp98pr939vj8eqsmaczq8c9gwxwnlupz9pvelpfj6ha0cgqjsue6x # admin
+    /// "#;
+    /// let file = SopsFile::parse(text)?;
+    /// assert_eq!(file.rules().len(), 1);
+    /// assert_eq!(file.rule_index_for("secrets/dev.env")?, Some(0));
+    ///
+    /// // Re-rendering the same recipients is byte-identical.
+    /// let sets: Vec<_> = file.rules().iter().map(|rule| rule.recipients.clone()).collect();
+    /// assert_eq!(file.render_with(&sets)?, text);
+    /// # Ok::<(), lockset_core::Error>(())
+    /// ```
     pub fn parse(text: &str) -> Result<Self> {
         let rule_re = Regex::new(r"^\s*-\s*path_regex:\s*(.+?)\s*$").expect("static regex");
         let age_re = Regex::new(r"^\s*age:\s*(.*?)\s*$").expect("static regex");

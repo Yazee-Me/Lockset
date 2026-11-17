@@ -192,6 +192,19 @@ fn truncate(s: &str) -> String {
 pub struct PathId(String);
 
 impl PathId {
+    /// # Example
+    ///
+    /// Windows and POSIX separators name the same payload; an escaping path is
+    /// refused.
+    ///
+    /// ```
+    /// use lockset_core::PathId;
+    ///
+    /// let id = PathId::parse("secrets\\prod\\deploy.env")?;
+    /// assert_eq!(id.as_str(), "secrets/prod/deploy.env");
+    /// assert!(PathId::parse("secrets/../deploy.env").is_err());
+    /// # Ok::<(), lockset_core::Error>(())
+    /// ```
     /// Parse a repository-relative path. Both separators are accepted on input
     /// and stored as `/`, so a Windows path and a POSIX path for the same file
     /// are the same value. Ambiguous or escaping forms are refused: an absolute

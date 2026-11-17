@@ -5,6 +5,11 @@ sops and age. Lockset is a CLI and a Rust library. sops stays the codec and
 `.sops.yaml` stays the recipient map — there is no Lockset server and no second
 secret store.
 
+Documentation: this README (install, configure, operate), [`SECURITY.md`](SECURITY.md)
+(threat model and reporting), [`CONTRIBUTING.md`](CONTRIBUTING.md) (development,
+tests, architecture rules), [`CHANGELOG.md`](CHANGELOG.md) (release notes), and
+the API docs at <https://docs.rs/lockset>.
+
 ## What it does
 
 - Reports who may read what, and drift between the map and the payloads:
@@ -79,8 +84,8 @@ lockset doctor                       # preflight: repo, sops, custody, identity,
 lockset status                       # identity, payloads, coverage, drift, empty values
 lockset who                          # label -> public key, payload count, local key
 lockset run --payload secrets/dev.env -- ./my-command   # or repo.default_payloads
-lockset run --pass-custody -- ./tool  # deliberate exception: the child gets the identity environment
-lockset run --clean-env -- ./my-command  # only PATH, HOME, TMPDIR, LANG plus the payloads
+lockset run --payload secrets/dev.env --pass-custody -- ./tool  # deliberate exception: the child gets the identity environment
+lockset run --payload secrets/dev.env --clean-env -- ./my-command  # only PATH, HOME, TMPDIR, LANG plus the payloads
 lockset run --payload secrets/a.env --payload secrets/b.env --last-wins -- ./my-command
 lockset set NEW_KEY --payload secrets/dev.env      # hidden prompt
 printf '%s' "$NEW_KEY" | lockset set NEW_KEY --payload secrets/dev.env --stdin
@@ -221,12 +226,29 @@ person_prefix = "dev-"                   # suggested for person add
 kind = "auto"                            # auto | the same forms as --custody
 env = "LOCKSET_AGE_KEY"                  # what bare `env` reads
 keychain_item = "lockset-age-key"        # what bare `keyring` reads
-keychain_account = ""                    # empty: the current user
+keychain_account = "ci"                  # omit for the current user
 
 [codec]
 sops = "sops"                            # --sops > LOCKSET_SOPS > this
 min_version = "3.13.0"                   # the preflight floor
 ```
+
+Every field, its default, and what it does:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `repo.sops_config` | `.sops.yaml` | The map, repo-relative. A non-default path is passed to sops as `--config`; `--repo` walks up to this file or `lockset.toml`. |
+| `repo.payload_globs` | `["secrets/**/*"]` | Which files are payloads, matched against repository-relative paths. `*` and `?` stop at `/`; `**/` spans any number of directories. |
+| `repo.default_payloads` | `[]` | What `run` and `set` use without `--payload`. Empty means "ask": a command that needs one stops with exit 2 and lists what is available. |
+| `[[identities]]` | `[]` | Identity registry: `label`, `public`, optional `roles`. When present it wins over `.sops.yaml` comments; role `admin` marks the identity that must open every payload. |
+| `labels.admin` | `"admin"` | Legacy label used for admin coverage while no registry exists. |
+| `labels.person_prefix` | `"dev-"` | Prefix suggested for `person add` labels. |
+| `custody.kind` | `"auto"` | `auto`, or any custody spec (`env`, `env:<NAME>`, `keyring`, `keyring:<service>`, `file:<path>`, `none`). |
+| `custody.env` | `LOCKSET_AGE_KEY` | The variable bare `env` reads. |
+| `custody.keychain_item` | `lockset-age-key` | The keychain item bare `keyring` reads. |
+| `custody.keychain_account` | current user | The keychain account; omit the field for the current user (an empty string is an error). |
+| `codec.sops` | `sops` | The binary; `--sops` and `LOCKSET_SOPS` win over it. |
+| `codec.min_version` | `3.13.0` | The preflight floor for sops. |
 
 `run` and `set` never invent a payload: without `--payload` they use
 `repo.default_payloads`, and a repository that names none stops with exit 2 and
@@ -266,7 +288,7 @@ accepts:
 
 The forms are `env`, `env:<NAME>`, `keyring`, `keyring:<service>`,
 `file:<absolute path>`, and `none`. A per-repo keychain item is
-`custody.keychain_item` plus `custody.keychain_account` (empty: the current
+`custody.keychain_item` plus `custody.keychain_account` (omit it for the current
 user); `keyring:<service>` overrides the service and keeps the configured
 account. An unknown or incomplete spec exits 2 and lists the forms; nothing
 falls back to another source.
@@ -328,7 +350,7 @@ lockset --dry-run set NEW --from-env NEW # uses repo.default_payloads
 
 ## Machine-readable output
 
-`status`, `who`, and `check` take `--json`, and a plan is JSON with
+`status`, `who`, `check`, and `doctor` take `--json`; a plan is JSON with
 `--dry-run --json`. Every document carries `"schema_version": 1` and only
 redacted data: identities are public keys, payload rows are counts, and a
 `SetValue` change serializes `"value": null`. stdout is the document alone;
@@ -346,6 +368,9 @@ lockset --dry-run --json grant age1... --label dev-alice
 environment. When several steps need them, `export` prints the selected payload
 values — and only those, never the identity — in the requested format.
 
+In GitHub Actions, prefer the composite action from "CI integration": it
+installs a verified release and masks the values for you. The manual equivalents:
+
 ```sh
 # GitHub Actions: mask every value, then append it to the job environment
 lockset export --payload secrets/prod/deploy.env --format dotenv |
@@ -360,6 +385,11 @@ lockset export --payload secrets/prod/deploy.env --format dotenv > .env.deploy
 # A shell step
 eval "$(lockset export --payload secrets/dev.env --format sh)"
 ```
+
+The masking loop is the important part: an exported value is secret material,
+and `$GITHUB_ENV` entries printed later are redacted only if the value was
+masked first (an empty value should be skipped rather than masked, which is what
+the action does).
 
 Payloads merge in the order given. A key defined by more than one payload is an
 error (exit 2) that names the key and both payloads, because a pipeline cannot
@@ -393,7 +423,7 @@ Pipelines can gate on the exit code; `lockset --help` prints the same table.
 | --- | --- |
 | 0 | ok |
 | 1 | findings: a failed `check`, a `status --strict` finding, or a runtime failure |
-| 2 | usage or configuration: bad argument, no `.sops.yaml`, unsupported payload format |
+| 2 | usage or configuration: bad argument or path, invalid `lockset.toml`, unknown custody form, no `.sops.yaml`, unsupported payload format |
 | 3 | custody or authentication: no identity, keychain or file custody failure |
 | 4 | external tool: `sops` missing or failing |
 | 5 | conflict or lock: an input changed, another process holds the repository |
@@ -700,6 +730,30 @@ signatures described under Releases.
   decrypt, because a structurally valid file with lost values only shows up on
   read.
 
+## Threat model
+
+The short version; [`SECURITY.md`](SECURITY.md) has the full model and the
+reporting process.
+
+- **The host is trusted.** The identity sits in the environment or a file
+  custody key that this user can read, so a same-user process (or root) can read
+  it too. Lockset keeps it out of argv, out of files it writes, and out of every
+  child it starts — it does not defend a compromised machine.
+- **`run` is the safe default; `export` is a deliberate disclosure.** `run`
+  puts values in one child's environment (no identity) and never prints them.
+  `export` prints them to stdout for a pipeline to consume, so mask them before
+  a runner echoes them and keep the output out of logs and git.
+- **What leaves the machine is visible where it goes.** CI log readers see what
+  you print; git history keeps ciphertext that revocation cannot erase; a
+  revoke rotates the data key to bound future exposure only.
+- **Payloads and the map are untrusted input.** Paths cannot traverse or read as
+  options, only dotenv payloads are accepted, non-age rules are reported and
+  refused where a rewrite would touch them, and every write is digest-checked,
+  atomic, and rolled back on failure.
+- **Releases are verifiable, not code-signed.** Check the published
+  `.sha256`/`SHA256SUMS` and the GitHub artifact attestation; macOS binaries are
+  not notarized and Windows binaries are unsigned (see "Signing").
+
 ## Security notes
 
 - Values are never written to a file: `run` passes them through the child
@@ -721,8 +775,8 @@ signatures described under Releases.
   New files are created with mode 0600, never written first and chmodded after.
 - Plans carry a value as a redacted `SecretValue`: `{:?}` prints `<redacted>`,
   `--json` emits `"value": null`, and the buffer is zeroized when the plan is
-  dropped. `--json` describes a plan, so it requires `--dry-run` and is not
-  available on the report commands.
+  dropped. `--json` prints a report on `status`, `who`, `check`, and `doctor`; for a
+  mutating command it describes the plan and requires `--dry-run`.
 - `key import` never puts the identity in an argument list: on macOS the
   keychain write asks `security(1)` to prompt for it, so `ps` cannot show it to
   a same-user process. A non-interactive run refuses to store it and points at

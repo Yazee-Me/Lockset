@@ -1,5 +1,15 @@
 /// Minimal dotenv handling: values only, no quoting rules beyond "everything
 /// after the first `=` is the value". That matches what sops writes.
+///
+/// ```
+/// use lockset_core::dotenv;
+///
+/// let values = dotenv::parse("# comment\nTOKEN=ENC[a,type:str]\r\nEMPTY=\n");
+/// assert_eq!(values, vec![
+///     ("TOKEN".to_owned(), "ENC[a,type:str]".to_owned()),
+///     ("EMPTY".to_owned(), String::new()),
+/// ]);
+/// ```
 pub fn parse(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {

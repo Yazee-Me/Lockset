@@ -1,0 +1,98 @@
+# Contributing
+
+Lockset is a Rust workspace: `lockset-core` (model, no I/O), `lockset-tools`
+(adapters), and `lockset` (CLI plus the orchestration library).
+
+## Setup
+
+```sh
+mise install     # rust 1.99.1, sops 3.13.3, age 1.3.2 (the versions CI uses)
+mise run check   # tests, lint, end-to-end, cargo-deny, cargo-audit
+```
+
+Docker is optional (container image and its smoke test). `cargo` alone works
+for `mise run test` and `mise run lint`; the end-to-end suite needs the pinned
+`sops`/`age`.
+
+## Gates
+
+Every change must pass, locally and in CI:
+
+```sh
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo fmt --check
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+cargo deny check
+cargo audit
+mise run e2e                  # real sops/age, unix only
+cargo +nightly fuzz run <target> -- -max_total_time=60   # when touching parsers
+```
+
+`mise run check` runs everything except the fuzz target (tests, lint including
+docs, end-to-end, cargo-deny, cargo-audit). Doctests run as part of
+`cargo test` (`cargo test --doc`).
+
+## Architecture invariants
+
+- **`lockset-core` never does I/O.** No process spawn, no filesystem, no
+  environment, no OS checks. Every external capability is a port (`Codec`,
+  `Custody`, `Repo`) implemented in `lockset-tools`, and the CLI injects the
+  environment as `Inputs`.
+- **Plans are data.** A command builds a `Plan` of `Change` values; the CLI
+  renders it (`--dry-run`) or hands it to `exec::apply`, the only place that
+  mutates anything.
+- **Errors carry an exit class.** `lockset_core::Error` variants map to the exit
+  codes in `README.md` (`usage::exit_code`). A new failure needs a class, not a
+  bare `anyhow` string, unless it is a genuine runtime failure (exit 1).
+- **No secret in argv or a file.** The identity reaches external tools through
+  the child environment only; values are never written to disk; sops output is
+  redacted before it is formatted.
+- **Paths and rewrites are conservative.** `PathId` accepts both separators and
+  refuses absolute/traversing/ambiguous forms; rewrites touch only the lines they
+  must and preserve line endings.
+
+## Changing behaviour
+
+- **New config field:** parse and validate it in `lockset-core/src/config.rs`
+  with an error that names the field, resolve precedence in
+  `lockset/src/wiring.rs`, document it in the README configuration reference
+  table, and add a test for the default, the override, and an invalid value.
+- **New command or flag:** add it to `cli.rs`, the dispatcher and handler in
+  `app.rs`, the help/exit-code contract if it fails, and the README. Tests must
+  cover the plain path, the failure, and `--json` where a document applies.
+- **New parser input:** add a proptest property in
+  `lockset-core/tests/parsers.rs` and, if it parses untrusted text, a fuzz
+  target in `fuzz/`.
+
+## Tests
+
+- `lockset/tests/` runs the real binary against temporary repositories. Tests
+  that need `sh`, permissions, or symlinks are gated `#![cfg(unix)]`; keep the
+  shim-free tests working on Windows.
+- Shims (`LOCKSET_SOPS` pointing at a script) cover sops interactions
+  deterministically; `lockset/tests/sops_contract.rs` records argv/environment
+  and is the place to pin a security boundary.
+- `mise run e2e` uses the real `sops`/`age`; it asserts the tool versions and
+  fails loudly when they are missing or too old.
+- New tests must fail when the behaviour regresses (not just call the code), and
+  must be deterministic and safe under `--test-threads`.
+
+## Commits and pull requests
+
+- Subject: `<type>(<scope>): <summary> (<ticket>)`, for example
+  `fix(run): keep the child's signal (LS-22)`. Types in use: `feat`, `fix`,
+  `refactor`, `test`, `docs`, `ci`, `chore`.
+- One ticket per branch. The repository uses stacked pull requests: branch from
+  the previous ticket's branch and target it in the PR.
+- Do not commit secrets, keys, or `target/`; licenses are MIT or Apache-2.0, and
+  contributions are accepted under the same dual license.
+
+## Releasing
+
+`cargo release patch --execute` (or `minor`/`major`) bumps every crate, opens
+the next `CHANGELOG.md` section from `Unreleased`, commits, tags
+`v<version>`, and pushes. The tag drives the cargo-dist release, the container
+image, and the action's install. Keep the `Unreleased` section accurate: it is
+the release body, and CI fails if a version's notes do not document the breaking
+change.

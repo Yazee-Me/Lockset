@@ -61,6 +61,21 @@
 
 ### Added
 
+- **The documentation is a reviewed set, not one README.** `SECURITY.md` carries
+  the threat model (same-user and root limits, child environment, CI logs, git
+  history, untrusted payloads, release verification), the reporting process, the
+  dependency policy, and `run` versus `export` guidance; `CONTRIBUTING.md`
+  covers setup, the exact gates, the architecture invariants (I/O-free core,
+  plans as data, `exec::apply` as the only mutation), how to add a config field
+  or command, the shim/e2e/fuzz test layers, and the release flow. The README
+  gained a full `lockset.toml` field reference (every field, default, meaning),
+  a threat-model summary, a documentation index, and corrections: the
+  `keychain_account` example (omitted for the current user, an empty string is
+  an error), the `--pass-custody`/`--clean-env` examples now name a payload,
+  `doctor --json` is documented, and the `--json`-on-reports claim was fixed.
+- Rustdoc examples on `PathId`, `Config`, `SopsFile`, `dotenv`, the `lockset`
+  library entry point, and the tools adapters run as doctests in CI.
+
 - **The security boundary and the rollback path are pinned by tests.** A fake
   `sops` on `PATH` records every argv and environment and proves the identity
   never reaches argv and the sops child inherits neither `LOCKSET_AGE_KEY` nor a

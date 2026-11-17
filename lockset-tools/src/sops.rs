@@ -52,6 +52,8 @@ pub struct SopsCodec {
     bin: String,
     /// The oldest version this repository accepts, from `codec.min_version`.
     min: Version,
+    /// The sops config file, from `repo.sops_config`.
+    config: PathId,
     /// The preflight result, so a command checks the tool once.
     checked: OnceLock<std::result::Result<Version, String>>,
 }
@@ -62,8 +64,21 @@ impl SopsCodec {
             root: root.into(),
             bin: bin.into(),
             min,
+            config: PathId::parse(lockset_core::config::DEFAULT_SOPS_CONFIG)
+                .expect("the default sops config path is valid"),
             checked: OnceLock::new(),
         }
+    }
+
+    /// Read and rewrite the sops config at `path` instead of `.sops.yaml`.
+    pub fn with_config(mut self, path: PathId) -> Self {
+        self.config = path;
+        self
+    }
+
+    /// The config file this codec passes to sops.
+    pub fn config(&self) -> &PathId {
+        &self.config
     }
 
     /// The binary this codec runs (`--sops`, then `LOCKSET_SOPS`, then `sops`).
@@ -144,6 +159,11 @@ impl SopsCodec {
         parent_env: impl IntoIterator<Item = (OsString, OsString)>,
     ) -> Command {
         let mut command = Command::new(&self.bin);
+        // sops looks for `.sops.yaml` in the working directory we set, so the
+        // flag is only needed when the repository keeps its config elsewhere.
+        if self.config.as_str() != lockset_core::config::DEFAULT_SOPS_CONFIG {
+            command.args(["--config", self.config.as_str()]);
+        }
         command
             .args(args)
             .current_dir(&self.root)
@@ -324,6 +344,32 @@ mod tests {
         assert!(!env.contains_key("SOPS_AGE_KEY_FILE"));
         assert!(!env.contains_key("SOPS_AGE_KEY_CMD"));
         assert!(!env.contains_key("SOPS_AGE_RECIPIENTS"));
+    }
+
+    #[test]
+    fn a_non_default_config_is_passed_to_sops() {
+        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION)
+            .with_config(PathId::parse("sops/settings.yaml").unwrap());
+        let key = SecretKey::generate();
+        let argv: Vec<String> = command(&codec, &key)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(&argv[..2], ["--config", "sops/settings.yaml"], "{argv:?}");
+        assert!(argv.iter().any(|arg| arg == "-d"), "{argv:?}");
+    }
+
+    #[test]
+    fn the_default_config_is_left_to_sops_discovery() {
+        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION);
+        let key = SecretKey::generate();
+        let argv: Vec<String> = command(&codec, &key)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(!argv.iter().any(|arg| arg == "--config"), "{argv:?}");
     }
 
     #[test]

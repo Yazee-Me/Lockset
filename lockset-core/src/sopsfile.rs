@@ -13,14 +13,28 @@ pub struct Recipient {
     pub label: Option<Label>,
 }
 
+/// The recipient backend a rule declares. Lockset reads and rewrites `age:`
+/// lines only; another backend is parsed and reported so a mixed repository
+/// works, and refused only when a mutation targets that rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleKind {
+    /// An `age:` line.
+    Age,
+    /// Another sops backend, by its key name (`kms`, `gcp_kms`, …).
+    Other(String),
+    /// A rule with no recipient line at all.
+    None,
+}
+
 /// One creation rule: which payload paths it covers and who can read them.
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub path_regex: String,
     pub recipients: Vec<Recipient>,
+    pub kind: RuleKind,
     /// Byte range of the whole `age:` line, newline included when present.
     /// Rewriting uses it to touch nothing else in the file.
-    pub age_span: Range<usize>,
+    pub age_span: Option<Range<usize>>,
     pub indent: String,
 }
 
@@ -34,6 +48,20 @@ impl Rule {
 
     pub fn contains(&self, key: &PubKey) -> bool {
         self.recipients.iter().any(|r| &r.key == key)
+    }
+
+    /// Whether lockset can read and rewrite this rule's recipients.
+    pub fn is_age(&self) -> bool {
+        self.kind == RuleKind::Age
+    }
+
+    /// The backend's name, for a message: `age`, `kms`, or `no recipients`.
+    pub fn backend(&self) -> &str {
+        match &self.kind {
+            RuleKind::Age => "age",
+            RuleKind::Other(name) => name,
+            RuleKind::None => "no recipients",
+        }
     }
 }
 
@@ -49,6 +77,11 @@ impl SopsFile {
     pub fn parse(text: &str) -> Result<Self> {
         let rule_re = Regex::new(r"^\s*-\s*path_regex:\s*(.+?)\s*$").expect("static regex");
         let age_re = Regex::new(r"^\s*age:\s*(.*?)\s*$").expect("static regex");
+        // The other recipient backends sops accepts. A rule keyed by one of
+        // them parses; only a mutation that has to rewrite `age:` refuses.
+        let other_re =
+            Regex::new(r"^\s*(pgp|kms|gcp_kms|azure_kv|hc_vault_transit_uri):\s*(.*?)\s*$")
+                .expect("static regex");
 
         let mut rules: Vec<Rule> = Vec::new();
         let mut offset = 0usize;
@@ -62,18 +95,25 @@ impl SopsFile {
                 rules.push(Rule {
                     path_regex: re.to_owned(),
                     recipients: Vec::new(),
-                    age_span: start..start,
+                    kind: RuleKind::None,
+                    age_span: None,
                     indent: String::new(),
                 });
+                continue;
+            }
+            let Some(rule) = rules.last_mut() else {
+                continue;
+            };
+            if let Some(caps) = other_re.captures(body) {
+                if rule.kind == RuleKind::None {
+                    rule.kind = RuleKind::Other(caps[1].to_owned());
+                }
                 continue;
             }
             let Some(caps) = age_re.captures(body) else {
                 continue;
             };
-            let Some(rule) = rules.last_mut() else {
-                continue;
-            };
-            if !rule.age_span.is_empty() {
+            if rule.age_span.is_some() {
                 continue;
             }
             let indent_len = body.len() - body.trim_start().len();
@@ -111,21 +151,14 @@ impl SopsFile {
                 recipients.push(Recipient { key, label });
             }
             rule.recipients = recipients;
-            rule.age_span = start..offset;
+            rule.kind = RuleKind::Age;
+            rule.age_span = Some(start..offset);
         }
 
         if rules.is_empty() {
             return Err(Error::invalid(
                 ".sops.yaml has no `- path_regex:` creation rule",
             ));
-        }
-        for rule in &rules {
-            if rule.age_span.is_empty() {
-                return Err(Error::invalid(format!(
-                    "rule '{}' has no age: line",
-                    rule.path_regex
-                )));
-            }
         }
 
         Ok(Self {
@@ -140,6 +173,11 @@ impl SopsFile {
 
     pub fn rules(&self) -> &[Rule] {
         &self.rules
+    }
+
+    /// Rules lockset cannot rewrite, for the per-rule report.
+    pub fn non_age_rules(&self) -> Vec<&Rule> {
+        self.rules.iter().filter(|rule| !rule.is_age()).collect()
     }
 
     /// Index of the first rule whose pattern matches `path`.
@@ -177,7 +215,18 @@ impl SopsFile {
         let mut out = String::with_capacity(self.text.len());
         let mut pos = 0usize;
         for (rule, set) in self.rules.iter().zip(new_sets.iter()) {
-            out.push_str(&self.text[pos..rule.age_span.start]);
+            let Some(span) = &rule.age_span else {
+                // No `age:` line to replace: the rule stays byte-identical. A
+                // caller that wanted to change it refuses before rendering.
+                if !set.is_empty() {
+                    return Err(Error::failed(format!(
+                        "internal: rule '{}' has no age: line to rewrite",
+                        rule.path_regex
+                    )));
+                }
+                continue;
+            };
+            out.push_str(&self.text[pos..span.start]);
             let keys: Vec<&str> = set.iter().map(|r| r.key.as_str()).collect();
             let labelled = set.iter().all(|r| r.label.is_some());
             let comment = if labelled && !set.is_empty() {
@@ -197,13 +246,13 @@ impl SopsFile {
             ));
             // Keep the line ending the file already uses: a CRLF map must not
             // end up with mixed endings.
-            let line = &self.text[rule.age_span.clone()];
+            let line = &self.text[span.clone()];
             if line.ends_with("\r\n") {
                 out.push_str("\r\n");
             } else if line.ends_with('\n') {
                 out.push('\n');
             }
-            pos = rule.age_span.end;
+            pos = span.end;
         }
         out.push_str(&self.text[pos..]);
         Ok(out)
@@ -339,6 +388,71 @@ mod tests {
         assert!(out.contains(C), "{out}");
         let again = SopsFile::parse(&out).unwrap();
         assert_eq!(again.rules()[0].recipients.len(), 3);
+    }
+
+    #[test]
+    fn mixed_rules_parse_and_report_per_rule() {
+        let text = format!(
+            "creation_rules:\n- path_regex: secrets/age/.*\\.env$\n  age: {A},{B} # admin,recovery\n- path_regex: secrets/kms/.*\\.env$\n  kms: arn:aws:kms:eu-west-1:1:key/abc\n- path_regex: secrets/bare/.*\\.env$\n"
+        );
+
+        let file = SopsFile::parse(&text).expect("a mixed file must parse");
+
+        assert_eq!(file.rules().len(), 3);
+        assert_eq!(file.rules()[0].kind, RuleKind::Age);
+        assert_eq!(file.rules()[1].kind, RuleKind::Other("kms".into()));
+        assert_eq!(file.rules()[1].backend(), "kms");
+        assert_eq!(file.rules()[2].kind, RuleKind::None);
+        assert_eq!(file.rules()[2].backend(), "no recipients");
+        let reported: Vec<&str> = file
+            .non_age_rules()
+            .iter()
+            .map(|rule| rule.path_regex.as_str())
+            .collect();
+        assert_eq!(
+            reported,
+            ["secrets/kms/.*\\.env$", "secrets/bare/.*\\.env$"]
+        );
+    }
+
+    #[test]
+    fn rendering_leaves_a_non_age_rule_byte_identical() {
+        let text = format!(
+            "creation_rules:\n- path_regex: secrets/age/.*\\.env$\n  age: {A},{B} # admin,recovery\n- path_regex: secrets/kms/.*\\.env$\n  kms: arn:aws:kms:eu-west-1:1:key/abc\n"
+        );
+        let file = SopsFile::parse(&text).unwrap();
+        let mut sets: Vec<Vec<Recipient>> = file
+            .rules()
+            .iter()
+            .map(|rule| rule.recipients.clone())
+            .collect();
+        sets[0].push(Recipient {
+            key: PubKey::parse(C).unwrap(),
+            label: Some(Label::parse("ci").unwrap()),
+        });
+
+        let out = file.render_with(&sets).unwrap();
+
+        assert!(out.contains(C), "the age rule changed: {out}");
+        assert!(
+            out.contains("  kms: arn:aws:kms:eu-west-1:1:key/abc\n"),
+            "the kms rule must stay byte-identical: {out}"
+        );
+        assert!(SopsFile::parse(&out).is_ok());
+    }
+
+    #[test]
+    fn asking_to_rewrite_a_non_age_rule_is_an_internal_error() {
+        let text = "creation_rules:\n- path_regex: secrets/kms/.*\\.env$\n  kms: arn:aws:kms:eu:1:key/abc\n";
+        let file = SopsFile::parse(text).unwrap();
+        let sets = vec![vec![Recipient {
+            key: PubKey::parse(A).unwrap(),
+            label: None,
+        }]];
+
+        let error = file.render_with(&sets).unwrap_err();
+
+        assert!(error.to_string().contains("no age: line"), "{error}");
     }
 
     #[test]

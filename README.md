@@ -133,7 +133,8 @@ highest first, flags, environment, this file, the defaults.
 
 ```toml
 [repo]
-sops_config = ".sops.yaml"               # the map --repo walks up to (with lockset.toml)
+sops_config = ".sops.yaml"               # the map --repo walks up to (with lockset.toml);
+                                         # a non-default path is passed to sops as --config
 payload_globs = ["secrets/**/*"]         # which files are payloads
 default_payloads = ["secrets/dev.env"]   # what run and set use without --payload
 
@@ -165,6 +166,20 @@ lists the payloads it does have; `set` needs exactly one. A setting's precedence
 
 A config error names the file and the field and exits 2, so a typo cannot
 quietly change which secrets a pipeline reads.
+
+Discovery walks the repository once, skips symlinks and hidden files, dedupes
+canonical paths, and keeps what `repo.payload_globs` matches; the dotenv-only
+format check still applies to everything it keeps.
+
+### Mixed recipient backends
+
+`sops` rules keyed by another backend (`pgp`, `kms`, `gcp_kms`, `azure_kv`,
+`hc_vault_transit_uri`) parse and do not fail the file. `status` lists their
+payloads, and `check` reports each such rule on its own line with the backend
+and what still works: `rotate` and `set` do, because they need no age
+recipients. `grant` and `revoke` refuse only a rule they would have to rewrite —
+the message names the rule and the backend and points at `--only` — so the rest
+of a mixed map stays manageable.
 
 ```sh
 lockset --config ./ci/lockset.toml doctor

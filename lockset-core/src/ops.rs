@@ -85,6 +85,24 @@ pub fn checks(snapshot: &Snapshot, labels: &crate::config::Labels) -> Vec<Check>
         },
     });
 
+    for (index, rule) in snapshot.sops.rules().iter().enumerate() {
+        if rule.is_age() {
+            continue;
+        }
+        out.push(Check {
+            name: format!("rule {}: {}", index + 1, rule.path_regex),
+            ok: true,
+            detail: if rule.kind == crate::sopsfile::RuleKind::None {
+                "no recipients declared; lockset reports it and rewrites age: lines only".into()
+            } else {
+                format!(
+                    "no age recipients ({}); rotate and set work, grant and revoke refuse",
+                    rule.backend()
+                )
+            },
+        });
+    }
+
     let drift = snapshot.drift();
     out.push(Check {
         name: "labels and recipients agree".into(),
@@ -135,6 +153,24 @@ pub fn checks(snapshot: &Snapshot, labels: &crate::config::Labels) -> Vec<Check>
     out
 }
 
+/// Refuse a mutation whose targeted rules have no `age:` line. Each index is a
+/// rule the plan would rewrite; a rule keyed by another backend stays sops's to
+/// manage, and the message says which rule and backend.
+fn refuse_without_age_rule(snapshot: &Snapshot, indexes: &[usize]) -> Result<()> {
+    for index in indexes {
+        let rule = &snapshot.sops.rules()[*index];
+        if !rule.is_age() {
+            return Err(Error::refused(format!(
+                "rule '{}' has no age recipients ({}); lockset rewrites age: lines only. \
+                 Pass --only with the payloads of age rules, or manage this rule with sops",
+                rule.path_regex,
+                rule.backend()
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub struct GrantRequest {
     pub key: PubKey,
     pub label: Label,
@@ -160,6 +196,8 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
             out
         }
     };
+
+    refuse_without_age_rule(snapshot, &targets)?;
 
     let mut sets: Vec<Vec<crate::sopsfile::Recipient>> =
         rules.iter().map(|r| r.recipients.clone()).collect();
@@ -338,11 +376,12 @@ pub fn revoke(snapshot: &Snapshot, request: &RevokeRequest) -> Result<crate::pla
             key
         )));
     }
+    refuse_without_age_rule(snapshot, &affected)?;
 
     let text = snapshot.sops.render_with(&sets)?;
     let mut plan = crate::plan::Plan::default();
     plan.push(crate::plan::Change::WriteFile {
-        path: PathId::parse(".sops.yaml")?,
+        path: snapshot.sops_path.clone(),
         contents: text,
     });
 
@@ -883,6 +922,131 @@ mod tests {
             .changes
             .iter()
             .any(|c| matches!(c, crate::plan::Change::RotateDataKey { .. })));
+    }
+
+    /// A repository with one age rule and one KMS rule, each with a payload.
+    fn mixed_snapshot() -> Snapshot {
+        let sops = SopsFile::parse(&format!(
+            "creation_rules:\n- path_regex: secrets/age/.*\\.env$\n  age: {A},{B} # admin,recovery\n- path_regex: secrets/kms/.*\\.env$\n  kms: arn:aws:kms:eu-west-1:1:key/abc\n"
+        ))
+        .unwrap();
+        let payloads = vec![
+            payload("secrets/age/dev.env", &[A, B]),
+            payload("secrets/kms/infra.env", &[]),
+        ];
+        Snapshot::new(".", sops, payloads, None)
+    }
+
+    #[test]
+    fn non_age_rules_are_reported_per_rule() {
+        let checks = checks(&mixed_snapshot());
+
+        let kms = checks
+            .iter()
+            .find(|check| check.name.starts_with("rule 2: secrets/kms/"))
+            .unwrap_or_else(|| panic!("no per-rule report: {checks:?}"));
+
+        assert!(kms.ok, "{kms:?}");
+        assert!(kms.detail.contains("kms"), "{kms:?}");
+        assert!(!checks.iter().any(|check| check.name.starts_with("rule 1:")));
+    }
+
+    #[test]
+    fn grant_refuses_a_rule_without_age_recipients() {
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-new").unwrap(),
+            only: None,
+        };
+
+        let error = grant(&mixed_snapshot(), &request).unwrap_err();
+
+        assert!(matches!(error, Error::Refused(_)), "{error:?}");
+        assert!(error.to_string().contains("secrets/kms/.*"), "{error}");
+        assert!(error.to_string().contains("(kms)"), "{error}");
+        assert!(error.to_string().contains("--only"), "{error}");
+    }
+
+    #[test]
+    fn grant_refuses_an_only_target_on_a_non_age_rule() {
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-new").unwrap(),
+            only: Some(vec![PathId::parse("secrets/kms/infra.env").unwrap()]),
+        };
+
+        let error = grant(&mixed_snapshot(), &request).unwrap_err();
+
+        assert!(matches!(error, Error::Refused(_)), "{error:?}");
+        assert!(error.to_string().contains("(kms)"), "{error}");
+    }
+
+    #[test]
+    fn grant_can_target_only_the_age_rule() {
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-new").unwrap(),
+            only: Some(vec![PathId::parse("secrets/age/dev.env").unwrap()]),
+        };
+
+        let plan = grant(&mixed_snapshot(), &request).unwrap();
+
+        let contents = plan
+            .changes
+            .iter()
+            .find_map(|change| match change {
+                crate::plan::Change::WriteFile { contents, .. } => Some(contents),
+                _ => None,
+            })
+            .expect("a map write");
+        assert!(contents.contains(C), "{contents}");
+        assert!(
+            contents.contains("  kms: arn:aws:kms:eu-west-1:1:key/abc\n"),
+            "the KMS rule must stay untouched: {contents}"
+        );
+    }
+
+    #[test]
+    fn revoke_keeps_non_age_rules_and_writes_the_configured_map() {
+        let snap = mixed_snapshot().with_sops_path(PathId::parse("sops/settings.yaml").unwrap());
+        let request = RevokeRequest {
+            target: RevokeTarget::Key(PubKey::parse(B).unwrap()),
+            keep_data_key: false,
+            force: false,
+        };
+
+        let plan = revoke(&snap, &request).unwrap();
+
+        let (path, contents) = plan
+            .changes
+            .iter()
+            .find_map(|change| match change {
+                crate::plan::Change::WriteFile { path, contents } => Some((path, contents)),
+                _ => None,
+            })
+            .expect("a map write");
+        assert_eq!(path.as_str(), "sops/settings.yaml");
+        assert!(!contents.contains(B), "{contents}");
+        assert!(
+            contents.contains("  kms: arn:aws:kms:eu-west-1:1:key/abc\n"),
+            "the KMS rule must stay untouched: {contents}"
+        );
+    }
+
+    #[test]
+    fn rotate_works_for_a_payload_without_age_recipients() {
+        let plan = rotate(
+            &mixed_snapshot(),
+            Some(&[PathId::parse("secrets/kms/infra.env").unwrap()]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.changes.len(),
+            1,
+            "rotate needs no age recipients: {:?}",
+            plan.changes
+        );
     }
 
     #[test]

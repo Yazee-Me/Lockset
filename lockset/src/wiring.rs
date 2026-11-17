@@ -36,7 +36,8 @@ impl Context {
         let config = load_config(cli.config.as_deref(), &root)?;
         let interactive = std::io::stdin().is_terminal();
         let custody = make_custody(cli.custody.as_deref(), &root, interactive, &config)?;
-        let codec = SopsCodec::new(&root, sops_bin(cli, &config), config.codec.min_version);
+        let codec = SopsCodec::new(&root, sops_bin(cli, &config), config.codec.min_version)
+            .with_config(config.sops_config.clone());
         log::debug!("repository root {}", root.display());
         log::debug!("custody {}", custody.kind());
         log::debug!("sops {}", codec.bin());

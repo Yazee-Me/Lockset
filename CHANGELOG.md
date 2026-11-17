@@ -57,6 +57,23 @@
   secret. An empty value counts as absent, and reading the payload needs the
   identity even for `--dry-run`.
 
+### Added
+
+- A sops rule keyed by another backend (`pgp`, `kms`, `gcp_kms`, `azure_kv`,
+  `hc_vault_transit_uri`) no longer fails the whole file: it parses, `status`
+  lists its payloads, and `check` reports it per rule with the backend and what
+  still works. `grant` and `revoke` refuse only a rule whose `age:` line they
+  would have to rewrite, naming the rule and backend; `rotate` and `set` are
+  unaffected.
+- `repo.sops_config` is passed to sops as `--config` when it is not the default
+  `.sops.yaml`, which sops discovers by itself in the working directory, so a
+  map at `sops/settings.yaml` works for reads and for `updatekeys`/`rotate`/`set`.
+
+### Fixed
+
+- `revoke` wrote `.sops.yaml` even when `repo.sops_config` named another file;
+  it now writes the configured path, like `grant`.
+
 ### Changed
 
 - Payload discovery walks the repository and keeps what `repo.payload_globs`

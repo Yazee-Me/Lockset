@@ -83,6 +83,20 @@ mise run build       # release build of the CLI
 mise run install     # link target/release/lockset into ~/.local/bin
 ```
 
+## Machine-readable output
+
+`status`, `who`, and `check` take `--json`, and a plan is JSON with
+`--dry-run --json`. Every document carries `"schema_version": 1` and only
+redacted data: identities are public keys, payload rows are counts, and a
+`SetValue` change serializes `"value": null`. stdout is the document alone;
+notes and warnings go to stderr.
+
+```sh
+lockset status --json | jq '.drift'
+lockset check  --json | jq -e 'all(.checks[]; .ok)'
+lockset --dry-run --json grant age1... --label dev-alice
+```
+
 ## Design notes
 
 - `lockset-core` never spawns a process, reads the environment, or touches the

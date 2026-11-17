@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::{Error, Result};
 
 /// A recipient label, as recorded in the trailing comment of an `age:` line.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct Label(String);
 
 impl Label {
@@ -54,7 +54,7 @@ impl FromStr for Label {
 }
 
 /// An age public key, exactly as it appears in `.sops.yaml` and the payload metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct PubKey(String);
 
 impl PubKey {

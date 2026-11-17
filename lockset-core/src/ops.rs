@@ -1,181 +1,8 @@
 use crate::model::{Label, PathId, PubKey};
 use crate::ports::Codec;
+use crate::report::Check;
 use crate::snapshot::Snapshot;
 use crate::{Error, Result};
-
-#[derive(Debug, Default, Clone)]
-pub struct Report {
-    pub lines: Vec<String>,
-}
-
-impl Report {
-    pub fn line(&mut self, line: impl Into<String>) {
-        self.lines.push(line.into());
-    }
-
-    pub fn blank(&mut self) {
-        if self.lines.last().is_some_and(|l| !l.is_empty()) {
-            self.lines.push(String::new());
-        }
-    }
-
-    pub fn render(&self) -> String {
-        let mut out = self.lines.join("\n");
-        out.push('\n');
-        out
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Check {
-    pub name: String,
-    pub ok: bool,
-    pub detail: String,
-}
-
-/// Readiness of the machine and the payload set. Read-only by construction.
-pub fn status(snapshot: &Snapshot) -> Report {
-    let mut report = Report::default();
-
-    match (&snapshot.identity, &snapshot.identity_error) {
-        (Some(identity), _) => report.line(format!(
-            "identity: {} ({}) via {}",
-            identity.public.as_str(),
-            identity
-                .label
-                .as_ref()
-                .map(|l| l.to_string())
-                .unwrap_or_else(|| "unlabelled".into()),
-            identity.custody
-        )),
-        (None, Some(error)) => report.line(format!("identity: unavailable — {error}")),
-        (None, None) => report.line(
-            "identity: none — set LOCKSET_AGE_KEY, pass --custody file:<path>, \
-             or run `lockset key import`",
-        ),
-    }
-
-    if let Some(identity) = &snapshot.identity {
-        let missing = snapshot.payloads_missing(&identity.public);
-        if missing.is_empty() {
-            report.line(format!(
-                "coverage: opens all {} payloads",
-                snapshot.payloads.len()
-            ));
-        } else {
-            report.line(format!(
-                "coverage: opens {}/{} payloads; missing: {}",
-                snapshot.payloads.len() - missing.len(),
-                snapshot.payloads.len(),
-                missing
-                    .iter()
-                    .map(|p| p.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-    }
-
-    report.blank();
-    report.line(format!(
-        "{:<34} {:>4} {:>10} {:>6}",
-        "payload", "keys", "recipients", "empty"
-    ));
-    for payload in &snapshot.payloads {
-        report.line(format!(
-            "{:<34} {:>4} {:>10} {:>6}",
-            payload.id.as_str(),
-            payload.keys.len(),
-            payload.recipients.len(),
-            payload.empty.len()
-        ));
-    }
-
-    let labels = snapshot.labels();
-    if !labels.is_empty() {
-        report.blank();
-        report.line("identities:");
-        for (label, key, ids) in labels {
-            report.line(format!(
-                "  {:<12} {}  {} payload(s)",
-                label.as_str(),
-                key.as_str(),
-                ids.len()
-            ));
-        }
-    }
-
-    if !snapshot.payload_errors.is_empty() {
-        report.blank();
-        report.line(format!(
-            "unreadable payloads: {}",
-            snapshot.payload_errors.len()
-        ));
-        for error in &snapshot.payload_errors {
-            report.line(format!("  {}: {}", error.id, error.error));
-        }
-    }
-
-    let drift = snapshot.drift();
-    report.blank();
-    if drift.is_empty() {
-        report.line("drift: none");
-    } else {
-        report.line(format!("drift: {} issue(s)", drift.len()));
-        for note in drift {
-            report.line(format!("  {note}"));
-        }
-    }
-
-    let empties: usize = snapshot.payloads.iter().map(|p| p.empty.len()).sum();
-    report.blank();
-    if empties == 0 {
-        report.line("empty values: none");
-    } else {
-        report.line(format!("empty values: {empties} (fill with `lockset set`)"));
-    }
-
-    report.blank();
-    report.line(next_step(snapshot));
-    report
-}
-
-fn next_step(snapshot: &Snapshot) -> String {
-    if snapshot.identity.is_none() {
-        return "next: lockset key import".into();
-    }
-    if !snapshot.payload_errors.is_empty() {
-        return "next: fix the unreadable payloads above".into();
-    }
-    let drift = snapshot.drift();
-    if !drift.is_empty() {
-        return "next: fix the .sops.yaml / payload drift above".into();
-    }
-    if snapshot.payloads.iter().any(|p| !p.empty.is_empty()) {
-        return "next: lockset set <KEY> --payload secrets/prod/infra.env".into();
-    }
-    "ready".into()
-}
-
-/// The identity map: who can read what, and whether that is the local key.
-pub fn who(snapshot: &Snapshot) -> Report {
-    let mut report = Report::default();
-    report.line(format!(
-        "{:<12} {:<64} {:>10}  {}",
-        "identity", "public key", "payloads", "local"
-    ));
-    let local = snapshot.identity.as_ref().map(|i| &i.public);
-    for (label, key, ids) in snapshot.labels() {
-        report.line(format!(
-            "{:<12} {:<64} {:>10}  {}",
-            label.as_str(),
-            key.as_str(),
-            ids.len(),
-            if local == Some(&key) { "yes" } else { "" }
-        ));
-    }
-    report
-}
 
 /// Invariants that never need a private key, plus the local-key coverage.
 pub fn checks(snapshot: &Snapshot) -> Vec<Check> {
@@ -608,10 +435,15 @@ mod tests {
 
     #[test]
     fn status_reports_identity_and_drift() {
-        let report = status(&snapshot(Some(A))).render();
-        assert!(report.contains("identity: age1p243yl"));
-        assert!(report.contains("coverage: opens all 2 payloads"));
-        assert!(report.contains("drift: none"));
+        let report = crate::report::StatusReport::new(&snapshot(Some(A)));
+
+        assert_eq!(report.identity.as_ref().map(|i| i.public.as_str()), Some(A));
+        let coverage = report.coverage.as_ref().unwrap();
+        assert_eq!((coverage.opens, coverage.total), (2, 2));
+        assert!(coverage.missing.is_empty());
+        assert!(report.drift.is_empty());
+        assert_eq!(report.payloads.len(), 2);
+        assert_eq!(report.schema_version, crate::report::SCHEMA_VERSION);
     }
 
     #[test]
@@ -622,18 +454,20 @@ mod tests {
 
     #[test]
     fn status_names_the_missing_identity() {
-        let report = status(&snapshot(None)).render();
-        assert!(report.contains("identity: none"), "{report}");
-        assert!(!report.contains("coverage:"), "{report}");
+        let report = crate::report::StatusReport::new(&snapshot(None));
+
+        assert!(report.identity.is_none());
+        assert!(report.coverage.is_none());
+        assert!(report.next.contains("key import"), "{report:?}");
     }
 
     #[test]
     fn status_reports_an_unavailable_identity_with_its_reason() {
-        let report = status(&snapshot(None).identity_unavailable("no session keyring")).render();
-        assert!(
-            report.contains("identity: unavailable — no session keyring"),
-            "{report}"
+        let report = crate::report::StatusReport::new(
+            &snapshot(None).identity_unavailable("no session keyring"),
         );
+
+        assert_eq!(report.identity_error.as_deref(), Some("no session keyring"));
     }
 
     struct FakeCodec(&'static str);
@@ -689,15 +523,20 @@ mod tests {
         };
         let snap = snapshot(Some(A)).with_payload_errors(vec![error]);
 
-        let report = status(&snap).render();
-        assert!(report.contains("unreadable payloads: 1"), "{report}");
+        let report = crate::report::StatusReport::new(&snap);
+        assert_eq!(report.payload_errors.len(), 1);
+        assert_eq!(report.payload_errors[0].id.as_str(), "secrets/bad.env");
         assert!(
-            report.contains("secrets/bad.env: not an age public key"),
-            "{report}"
+            report.payload_errors[0]
+                .error
+                .contains("not an age public key"),
+            "{:?}",
+            report.payload_errors
         );
         assert!(
-            report.contains("next: fix the unreadable payloads"),
-            "{report}"
+            report.next.contains("fix the unreadable payloads"),
+            "{}",
+            report.next
         );
 
         let checks = checks(&snap);

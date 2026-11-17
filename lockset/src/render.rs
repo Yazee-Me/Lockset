@@ -1,19 +1,177 @@
 use anyhow::{Context, Result};
+use lockset_core::report::{CheckReport, IdentityReport, PlanDocument, StatusReport};
 use lockset_core::{Change, Plan};
+use serde::Serialize;
 
-/// Print the plan. `--json` prints the plan itself; the caller validates that
-/// it asked for a dry run of a command that builds one.
+/// Serialize a `--json` document.
+pub fn json<T: Serialize>(document: &T) -> Result<String> {
+    serde_json::to_string_pretty(document).context("cannot encode the document as JSON")
+}
+
+/// A blank line between sections, only when the previous line is not blank.
+fn gap(lines: &mut Vec<String>) {
+    if lines.last().is_some_and(|line| !line.is_empty()) {
+        lines.push(String::new());
+    }
+}
+
+fn join(lines: Vec<String>) -> String {
+    lines.join("\n")
+}
+
+/// `status` as text: the same facts the JSON document carries.
+pub fn status(report: &StatusReport) -> String {
+    let mut lines = Vec::new();
+
+    match (&report.identity, &report.identity_error) {
+        (Some(identity), _) => lines.push(format!(
+            "identity: {} ({}) via {}",
+            identity.public.as_str(),
+            identity
+                .label
+                .as_ref()
+                .map(|label| label.to_string())
+                .unwrap_or_else(|| "unlabelled".into()),
+            identity.custody
+        )),
+        (None, Some(error)) => lines.push(format!("identity: unavailable — {error}")),
+        (None, None) => lines.push(
+            "identity: none — set LOCKSET_AGE_KEY, pass --custody file:<path>, \
+             or run `lockset key import`"
+                .into(),
+        ),
+    }
+
+    if let Some(coverage) = &report.coverage {
+        if coverage.missing.is_empty() {
+            lines.push(format!("coverage: opens all {} payloads", coverage.total));
+        } else {
+            lines.push(format!(
+                "coverage: opens {}/{} payloads; missing: {}",
+                coverage.opens,
+                coverage.total,
+                coverage
+                    .missing
+                    .iter()
+                    .map(|path| path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+
+    gap(&mut lines);
+    lines.push(format!(
+        "{:<34} {:>4} {:>10} {:>6}",
+        "payload", "keys", "recipients", "empty"
+    ));
+    for payload in &report.payloads {
+        lines.push(format!(
+            "{:<34} {:>4} {:>10} {:>6}",
+            payload.path.as_str(),
+            payload.keys,
+            payload.recipients,
+            payload.empty
+        ));
+    }
+
+    if !report.identities.is_empty() {
+        gap(&mut lines);
+        lines.push("identities:".into());
+        for identity in &report.identities {
+            lines.push(format!(
+                "  {:<12} {}  {} payload(s)",
+                identity.label,
+                identity.public.as_str(),
+                identity.payloads
+            ));
+        }
+    }
+
+    if !report.payload_errors.is_empty() {
+        gap(&mut lines);
+        lines.push(format!(
+            "unreadable payloads: {}",
+            report.payload_errors.len()
+        ));
+        for error in &report.payload_errors {
+            lines.push(format!("  {}: {}", error.id, error.error));
+        }
+    }
+
+    gap(&mut lines);
+    if report.drift.is_empty() {
+        lines.push("drift: none".into());
+    } else {
+        lines.push(format!("drift: {} issue(s)", report.drift.len()));
+        for note in &report.drift {
+            lines.push(format!("  {note}"));
+        }
+    }
+
+    gap(&mut lines);
+    if report.empty_values == 0 {
+        lines.push("empty values: none".into());
+    } else {
+        lines.push(format!(
+            "empty values: {} (fill with `lockset set`)",
+            report.empty_values
+        ));
+    }
+
+    gap(&mut lines);
+    lines.push(report.next.clone());
+
+    join(lines)
+}
+
+/// `who` as text: the identity map.
+pub fn who(report: &IdentityReport) -> String {
+    let mut lines = vec![format!(
+        "{:<12} {:<64} {:>10}  {}",
+        "identity", "public key", "payloads", "local"
+    )];
+    for identity in &report.identities {
+        lines.push(format!(
+            "{:<12} {:<64} {:>10}  {}",
+            identity.label,
+            identity.public.as_str(),
+            identity.payloads,
+            if identity.local { "yes" } else { "" }
+        ));
+    }
+    join(lines)
+}
+
+/// `check` as text: one line per invariant.
+pub fn check(report: &CheckReport) -> String {
+    let lines: Vec<String> = report
+        .checks
+        .iter()
+        .map(|check| {
+            format!(
+                "{:<44} {:<4} {}",
+                check.name,
+                if check.ok { "ok" } else { "FAIL" },
+                check.detail
+            )
+        })
+        .collect();
+    join(lines)
+}
+
+/// Print the plan. `--json` prints the plan document; otherwise notes and
+/// warnings go to stderr so stdout carries only the plan itself.
 pub fn plan(plan: &Plan, dry_run: bool, json: bool) -> Result<()> {
     if json {
-        let text = serde_json::to_string_pretty(plan).context("cannot encode the plan as JSON")?;
-        println!("{text}");
+        println!("{}", self::json(&PlanDocument::new(plan))?);
         return Ok(());
     }
     for note in &plan.notes {
-        println!("{note}");
+        eprintln!("{note}");
     }
     for warning in &plan.warnings {
-        println!("warning: {warning}");
+        eprintln!("warning: {warning}");
     }
     if dry_run {
         if plan.changes.is_empty() {

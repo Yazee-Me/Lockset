@@ -10,8 +10,11 @@ use std::process::ExitCode;
 
 use anyhow::{bail, Result};
 use clap::Parser;
-use lockset_core::ops::{self, Check, GrantRequest, RevokeRequest, RevokeTarget};
-use lockset_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretValue};
+use lockset_core::ops::{self, GrantRequest, RevokeRequest, RevokeTarget};
+use lockset_core::{
+    exec, Change, Check, CheckReport, Codec, IdentityReport, Label, PathId, Plan, PubKey,
+    SecretValue, StatusReport,
+};
 
 use crate::cli::{Cli, Command, KeyCommand, PersonCommand};
 
@@ -28,26 +31,19 @@ fn payload_list(list: &str) -> Result<Vec<PathId>> {
         .collect()
 }
 
-/// Whether to print the plan as JSON. JSON describes a plan, so it needs a dry
-/// run and a command that builds one; anything else is a usage error rather
-/// than a flag that quietly does nothing.
-fn plan_json(cli: &Cli) -> Result<bool> {
+/// Whether `--json` applies here. Reports are JSON on their own; a plan is
+/// JSON only with `--dry-run` (an apply's log is text); `run` has no document.
+fn json_requested(cli: &Cli) -> Result<bool> {
     if !cli.json {
         return Ok(false);
     }
-    if !cli.dry_run {
-        return Err(usage::error("--json prints a plan; pass --dry-run with it"));
-    }
     match &cli.command {
-        Command::Set { .. }
-        | Command::Rotate { .. }
-        | Command::Person { .. }
-        | Command::Grant { .. }
-        | Command::Revoke { .. }
-        | Command::Key { .. } => Ok(true),
-        Command::Status | Command::Who | Command::Check | Command::Run { .. } => Err(usage::error(
-            "--json prints plans; this command has no JSON output",
+        Command::Status | Command::Who | Command::Check => Ok(true),
+        Command::Run { .. } => Err(usage::error(
+            "--json prints plans and reports; run has no JSON output",
         )),
+        _ if !cli.dry_run => Err(usage::error("--json prints a plan; pass --dry-run with it")),
+        _ => Ok(true),
     }
 }
 
@@ -63,20 +59,30 @@ fn main() -> ExitCode {
 
 fn run() -> Result<u8> {
     let cli = Cli::parse();
-    plan_json(&cli)?;
+    json_requested(&cli)?;
     let context = wiring::Context::detect(&cli)?;
     let _lock = wiring::mutation_lock(&cli, &context)?;
 
     match &cli.command {
         Command::Status => {
-            println!("{}", ops::status(&wiring::snapshot(&context)?).render());
+            let report = StatusReport::new(&wiring::snapshot(&context)?);
+            if cli.json {
+                println!("{}", render::json(&report)?);
+            } else {
+                println!("{}", render::status(&report));
+            }
             Ok(0)
         }
         Command::Who => {
-            println!("{}", ops::who(&wiring::snapshot(&context)?).render());
+            let report = IdentityReport::new(&wiring::snapshot(&context)?);
+            if cli.json {
+                println!("{}", render::json(&report)?);
+            } else {
+                println!("{}", render::who(&report));
+            }
             Ok(0)
         }
-        Command::Check => check(&context),
+        Command::Check => check(&context, &cli),
         Command::Set {
             key,
             payload,
@@ -125,7 +131,7 @@ fn run() -> Result<u8> {
     }
 }
 
-fn check(context: &wiring::Context) -> Result<u8> {
+fn check(context: &wiring::Context, cli: &Cli) -> Result<u8> {
     let snapshot = wiring::snapshot(context)?;
     let mut results = ops::checks(&snapshot);
 
@@ -148,16 +154,13 @@ fn check(context: &wiring::Context) -> Result<u8> {
         }
     }
 
-    let failed = results.iter().filter(|check| !check.ok).count();
-    for check in &results {
-        println!(
-            "{:<44} {:<4} {}",
-            check.name,
-            if check.ok { "ok" } else { "FAIL" },
-            check.detail
-        );
+    let report = CheckReport::new(results);
+    if cli.json {
+        println!("{}", render::json(&report)?);
+    } else {
+        println!("{}", render::check(&report));
     }
-    Ok(if failed == 0 { 0 } else { 1 })
+    Ok(if report.failed() == 0 { 0 } else { 1 })
 }
 
 fn run_command(

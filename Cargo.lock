@@ -1350,6 +1350,7 @@ dependencies = [
  "lockset-core",
  "lockset-tools",
  "rpassword",
+ "serde",
  "serde_json",
  "zeroize",
 ]

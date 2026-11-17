@@ -56,6 +56,15 @@
   `--dry-run --json` prints the redacted plan; `--json` needs `--dry-run` and is
   not available on the report commands.
 
+### Added
+
+- `status`, `who`, and `check` accept `--json`, and plan documents carry
+  `"schema_version": 1`. Each report is a stable serde structure (`StatusReport`,
+  `IdentityReport`, `CheckReport`, `PlanDocument`) with counts and public keys
+  only: private keys, plaintext values, and `SetValue.value` are never
+  serialized. Plan notes and warnings moved to stderr so stdout is machine
+  readable; the text views are otherwise unchanged.
+
 ### Fixed
 
 - Payload formats are explicit: dotenv (`.env`) is the only supported format.

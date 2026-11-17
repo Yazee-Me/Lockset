@@ -13,6 +13,7 @@ pub mod model;
 pub mod ops;
 pub mod plan;
 pub mod ports;
+pub mod report;
 pub mod snapshot;
 pub mod sopsfile;
 
@@ -21,4 +22,5 @@ pub use error::{Error, Result};
 pub use model::{CustodyKind, Label, PathId, PubKey, SecretKey};
 pub use plan::{Change, Plan, SecretValue};
 pub use ports::{Codec, Custody, Repo};
+pub use report::{Check, CheckReport, IdentityReport, PlanDocument, StatusReport, SCHEMA_VERSION};
 pub use snapshot::{IdentityView, PayloadError, Snapshot};

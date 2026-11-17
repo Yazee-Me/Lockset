@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
+use serde::Serialize;
+
 use crate::meta::PayloadMeta;
 use crate::model::{CustodyKind, Label, PathId, PubKey};
 use crate::sopsfile::SopsFile;
 
 /// The local private key, when custody has one.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IdentityView {
     pub public: PubKey,
     pub custody: CustodyKind,
@@ -14,7 +16,7 @@ pub struct IdentityView {
 
 /// A payload that could not be read or parsed. Reports surface it and carry on
 /// with the rest; unrelated payloads stay usable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PayloadError {
     pub id: PathId,
     pub error: String,

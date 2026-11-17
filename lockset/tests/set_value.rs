@@ -283,14 +283,3 @@ fn json_without_a_dry_run_is_a_usage_error() {
     assert!(stderr.contains("--dry-run"), "{stderr}");
     assert_eq!(repo.read("secrets/dev.env"), "TOKEN=old\n");
 }
-
-#[test]
-fn a_report_has_no_json_output() {
-    let repo = Repo::new("json-report");
-
-    let output = lockset(&repo, &strings(&["status", "--json", "--dry-run"]));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert_eq!(output.status.code(), Some(2), "{stderr}");
-    assert!(stderr.contains("no JSON output"), "{stderr}");
-}

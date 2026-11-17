@@ -1,52 +1,9 @@
 //! A payload path that could leave the repository, or that an external tool
 //! would read as an option, is a usage error: exit 2 before any codec call.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod common;
 
-/// A repository root with the `.sops.yaml` the CLI insists on finding.
-struct Repo(PathBuf);
-
-impl Repo {
-    fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("lockset-usage-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(".sops.yaml"),
-            "creation_rules:\n  - path_regex: secrets/.*\\.env$\n    age: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\n",
-        )
-        .unwrap();
-        Self(dir)
-    }
-}
-
-impl Drop for Repo {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn lockset(repo: &Repo, args: &[String]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lockset"))
-        .arg("--repo")
-        .arg(repo.0.as_os_str())
-        .args(args)
-        // Reaching the codec would surface this path instead of the usage error.
-        .env("LOCKSET_SOPS", nonexistent_sops())
-        .env_remove("LOCKSET_AGE_KEY")
-        .output()
-        .unwrap()
-}
-
-fn nonexistent_sops() -> &'static Path {
-    Path::new("/nonexistent/lockset-test-sops")
-}
-
-fn strings(args: &[&str]) -> Vec<String> {
-    args.iter().map(|arg| (*arg).to_owned()).collect()
-}
+use common::{lockset, strings, Repo};
 
 #[test]
 fn run_refuses_bad_payloads_before_the_codec() {
@@ -87,4 +44,31 @@ fn set_refuses_a_traversing_payload_before_the_codec() {
 
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("invalid path"), "{stderr}");
+}
+
+#[test]
+fn an_unknown_custody_spec_is_a_usage_error_that_changes_nothing() {
+    let repo = Repo::new("custody");
+    let before = std::fs::read_to_string(repo.sops_path()).unwrap();
+
+    let output = lockset(&repo, &strings(&["--custody", "bogus", "status"]));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("unknown custody 'bogus'"), "{stderr}");
+    for form in ["env", "keyring", "file:<path>", "keyring:<service>"] {
+        assert!(
+            stderr.contains(form),
+            "stderr does not list {form}: {stderr}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(repo.sops_path()).unwrap(),
+        before,
+        "a rejected custody spec must not touch the repository"
+    );
+    assert!(
+        !repo.path().join("secrets").exists(),
+        "a rejected custody spec must not create anything"
+    );
 }

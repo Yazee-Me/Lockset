@@ -42,6 +42,35 @@ impl Custody for EnvCustody {
     }
 }
 
+/// No identity source is configured and the run is not interactive. Reports see
+/// no identity instead of probing the OS keychain; storing or forgetting a key
+/// asks for an explicit source rather than guessing one.
+pub struct UnconfiguredCustody;
+
+impl Custody for UnconfiguredCustody {
+    fn get(&self) -> Result<Option<SecretKey>> {
+        Ok(None)
+    }
+
+    fn set(&self, _key: &SecretKey) -> Result<()> {
+        Err(Error::refused(
+            "no identity source is configured for a non-interactive run; \
+             set LOCKSET_AGE_KEY or pass --custody file:<path>",
+        ))
+    }
+
+    fn forget(&self) -> Result<()> {
+        Err(Error::refused(
+            "there is nothing to forget: no identity source is configured for a \
+             non-interactive run; pass --custody keyring or --custody file:<path>",
+        ))
+    }
+
+    fn kind(&self) -> CustodyKind {
+        CustodyKind::None
+    }
+}
+
 /// Explicit file custody for headless machines: mode 0600, never inside the
 /// repository.
 #[derive(Debug)]
@@ -321,8 +350,12 @@ impl KeyringCustody {
 
     #[cfg(not(target_os = "macos"))]
     fn entry(&self) -> Result<keyring::v1::Entry> {
-        keyring::v1::Entry::new(&self.service, &self.account)
-            .map_err(|e| Error::failed(format!("keyring unavailable: {e}")))
+        keyring::v1::Entry::new(&self.service, &self.account).map_err(|e| {
+            Error::failed(format!(
+                "keyring unavailable: {e}; use --custody env or --custody file:<path> \
+                     on a machine without a session keyring"
+            ))
+        })
     }
 }
 
@@ -349,7 +382,8 @@ impl Custody for KeyringCustody {
                 Ok(_) => Ok(None),
                 Err(keyring::Error::NoEntry) => Ok(None),
                 Err(e) => Err(Error::failed(format!(
-                    "cannot read the keyring item {}: {e}",
+                    "cannot read the keyring item {}: {e}; use --custody env or \
+                     --custody file:<path> on a machine without a session keyring",
                     self.service
                 ))),
             }
@@ -387,9 +421,12 @@ impl Custody for KeyringCustody {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            self.entry()?
-                .set_password(key.expose())
-                .map_err(|e| Error::failed(format!("cannot write the keyring item: {e}")))
+            self.entry()?.set_password(key.expose()).map_err(|e| {
+                Error::failed(format!(
+                    "cannot write the keyring item: {e}; use --custody env or \
+                         --custody file:<path> on a machine without a session keyring"
+                ))
+            })
         }
     }
 
@@ -405,7 +442,8 @@ impl Custody for KeyringCustody {
                 Ok(()) => Ok(()),
                 Err(keyring::Error::NoEntry) => Ok(()),
                 Err(e) => Err(Error::failed(format!(
-                    "cannot delete the keyring item: {e}"
+                    "cannot delete the keyring item: {e}; use --custody env or \
+                     --custody file:<path> on a machine without a session keyring"
                 ))),
             }
         }
@@ -510,6 +548,17 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn an_unconfigured_custody_holds_nothing_and_asks_for_a_source() {
+        let custody = UnconfiguredCustody;
+
+        assert!(custody.get().unwrap().is_none());
+        assert_eq!(custody.kind(), CustodyKind::None);
+        let error = custody.set(&SecretKey::generate()).unwrap_err();
+        assert!(error.to_string().contains("LOCKSET_AGE_KEY"), "{error}");
+        assert!(custody.forget().is_err());
     }
 
     #[test]

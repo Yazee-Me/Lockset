@@ -18,6 +18,9 @@ pub struct Snapshot {
     pub sops: SopsFile,
     pub payloads: Vec<PayloadMeta>,
     pub identity: Option<IdentityView>,
+    /// Why custody failed instead of simply holding nothing. Reports stay
+    /// usable; `check` records this as a finding.
+    pub identity_error: Option<String>,
 }
 
 impl Snapshot {
@@ -32,7 +35,14 @@ impl Snapshot {
             sops,
             payloads,
             identity,
+            identity_error: None,
         }
+    }
+
+    /// Record the custody failure behind a missing identity.
+    pub fn identity_unavailable(mut self, error: impl Into<String>) -> Self {
+        self.identity_error = Some(error.into());
+        self
     }
 
     pub fn label_for(&self, key: &PubKey) -> Option<Label> {

@@ -37,8 +37,8 @@ pub struct Check {
 pub fn status(snapshot: &Snapshot) -> Report {
     let mut report = Report::default();
 
-    match &snapshot.identity {
-        Some(identity) => report.line(format!(
+    match (&snapshot.identity, &snapshot.identity_error) {
+        (Some(identity), _) => report.line(format!(
             "identity: {} ({}) via {}",
             identity.public.as_str(),
             identity
@@ -48,7 +48,11 @@ pub fn status(snapshot: &Snapshot) -> Report {
                 .unwrap_or_else(|| "unlabelled".into()),
             identity.custody
         )),
-        None => report.line("identity: none — run `lockset key import`"),
+        (None, Some(error)) => report.line(format!("identity: unavailable — {error}")),
+        (None, None) => report.line(
+            "identity: none — set LOCKSET_AGE_KEY, pass --custody file:<path>, \
+             or run `lockset key import`",
+        ),
     }
 
     if let Some(identity) = &snapshot.identity {
@@ -162,6 +166,26 @@ pub fn who(snapshot: &Snapshot) -> Report {
 /// Invariants that never need a private key, plus the local-key coverage.
 pub fn checks(snapshot: &Snapshot) -> Vec<Check> {
     let mut out = Vec::new();
+
+    out.push(match (&snapshot.identity, &snapshot.identity_error) {
+        (Some(identity), _) => Check {
+            name: "identity".into(),
+            ok: true,
+            detail: format!("{} via {}", identity.public, identity.custody),
+        },
+        (None, Some(error)) => Check {
+            name: "identity".into(),
+            ok: false,
+            detail: format!("unavailable: {error}"),
+        },
+        (None, None) => Check {
+            name: "identity".into(),
+            ok: false,
+            detail: "none — set LOCKSET_AGE_KEY, pass --custody file:<path>, or run \
+                     `lockset key import`"
+                .into(),
+        },
+    });
 
     let not_ciphertext: Vec<&str> = snapshot
         .payloads
@@ -560,6 +584,41 @@ mod tests {
     fn checks_pass_for_a_consistent_snapshot() {
         let checks = checks(&snapshot(Some(A)));
         assert!(checks.iter().all(|c| c.ok), "{:?}", checks);
+    }
+
+    #[test]
+    fn status_names_the_missing_identity() {
+        let report = status(&snapshot(None)).render();
+        assert!(report.contains("identity: none"), "{report}");
+        assert!(!report.contains("coverage:"), "{report}");
+    }
+
+    #[test]
+    fn status_reports_an_unavailable_identity_with_its_reason() {
+        let report = status(&snapshot(None).identity_unavailable("no session keyring")).render();
+        assert!(
+            report.contains("identity: unavailable — no session keyring"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn checks_flag_a_missing_identity() {
+        let checks = checks(&snapshot(None));
+        let identity = checks.iter().find(|c| c.name == "identity").unwrap();
+        assert!(!identity.ok);
+        assert!(identity.detail.contains("key import"), "{identity:?}");
+    }
+
+    #[test]
+    fn checks_report_a_custody_failure() {
+        let checks = checks(&snapshot(None).identity_unavailable("cannot read the keyring item"));
+        let identity = checks.iter().find(|c| c.name == "identity").unwrap();
+        assert!(!identity.ok);
+        assert!(
+            identity.detail.contains("cannot read the keyring item"),
+            "{identity:?}"
+        );
     }
 
     #[test]

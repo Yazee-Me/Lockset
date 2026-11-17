@@ -37,7 +37,12 @@ Every mutating command prints its plan; `--dry-run` stops there.
   absolute path outside the repository — a mounted secret such as
   `/run/secrets/age-key`, for instance: the key file is created with mode 0600,
   and a symlink, a non-regular file, a path inside the repository, or a file
-  readable by other users is refused.
+  readable by other users is refused. Without an identity the read-only commands
+  still work: `status` and `who` report no identity, and `check` records it as a
+  finding. A non-interactive run never falls back to the keychain implicitly; it
+  reports no identity and asks for `LOCKSET_AGE_KEY`, `--custody file:<path>`, or
+  an explicit `--custody keyring`. An unknown `--custody` form exits 2 and lists
+  the valid ones.
 - A repository with `.sops.yaml` at its root, payloads as `secrets/**/*.env`,
   and recipients labelled by a trailing `# label,...` comment in recipient
   order. Payload paths are repository-relative: an absolute path, `..`, a

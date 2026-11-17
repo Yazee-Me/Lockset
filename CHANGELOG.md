@@ -42,3 +42,14 @@
   others (mode 0600 required) is rejected with a `chmod 600` hint, and a new key
   file is created with mode 0600 through the open options instead of being
   chmodded after the secret was written.
+
+### Fixed
+
+- `--custody` fails closed: an unknown form exits 2 and lists `env`, `keyring`,
+  `file:<path>`, and `keyring:<service>` instead of warning and using the
+  default, and a non-interactive run with no `LOCKSET_AGE_KEY` no longer probes
+  the OS keychain implicitly — it reports no identity and names the sources to
+  configure.
+- A keyring that cannot answer no longer aborts `status` or `who`: they report
+  `identity: unavailable` with the reason, and `check` records the failure
+  instead of the command failing.

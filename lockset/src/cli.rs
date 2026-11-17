@@ -15,7 +15,7 @@ pub struct Cli {
     pub repo: Option<PathBuf>,
 
     /// env | keyring | file:<path> (absolute, mode 0600, outside the repo; default: env when
-    /// LOCKSET_AGE_KEY is set, else keyring)
+    /// LOCKSET_AGE_KEY is set, else keyring on a terminal and none otherwise)
     #[arg(long, global = true, value_name = "KIND")]
     pub custody: Option<String>,
 

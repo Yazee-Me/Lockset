@@ -1,10 +1,10 @@
 mod cli;
 mod input;
 mod render;
+mod usage;
 mod wiring;
 
 use std::ffi::OsString;
-use std::fmt;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
@@ -15,36 +15,11 @@ use lockset_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretKey};
 
 use crate::cli::{Cli, Command, KeyCommand, PersonCommand};
 
-/// A bad argument or repository value. It maps to the CLI's usage/config exit
-/// code and is always raised before a codec or repo call.
-#[derive(Debug)]
-struct Usage(String);
-
-impl fmt::Display for Usage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Usage {}
-
-fn usage(message: impl Into<String>) -> anyhow::Error {
-    anyhow::Error::new(Usage(message.into()))
-}
-
-fn exit_code(error: &anyhow::Error) -> u8 {
-    if error.downcast_ref::<Usage>().is_some() {
-        2
-    } else {
-        1
-    }
-}
-
 /// A path from the command line. Parsing it first means an absolute path,
 /// `..`, a backslash, an empty segment, or a leading `-` stops here, before any
 /// sops invocation can be handed the value.
 fn payload_id(value: &str) -> Result<PathId> {
-    PathId::parse(value).map_err(|error| usage(error.to_string()))
+    PathId::parse(value).map_err(|error| usage::error(error.to_string()))
 }
 
 fn payload_list(list: &str) -> Result<Vec<PathId>> {
@@ -58,7 +33,7 @@ fn main() -> ExitCode {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("error: {error:#}");
-            ExitCode::from(exit_code(&error))
+            ExitCode::from(usage::exit_code(&error))
         }
     }
 }

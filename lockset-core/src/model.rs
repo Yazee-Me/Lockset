@@ -214,6 +214,8 @@ pub enum CustodyKind {
     Env,
     File,
     Memory,
+    /// No identity source is configured and the run is not interactive.
+    None,
 }
 
 impl fmt::Display for CustodyKind {
@@ -223,6 +225,7 @@ impl fmt::Display for CustodyKind {
             CustodyKind::Env => "env",
             CustodyKind::File => "file",
             CustodyKind::Memory => "memory",
+            CustodyKind::None => "none",
         })
     }
 }

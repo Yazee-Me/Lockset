@@ -56,7 +56,12 @@ fn an_unknown_custody_spec_is_a_usage_error_that_changes_nothing() {
 
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("unknown custody 'bogus'"), "{stderr}");
-    for form in ["env", "keyring", "file:<path>", "keyring:<service>"] {
+    for form in [
+        "env:<NAME>",
+        "keyring",
+        "file:<absolute path>",
+        "keyring:<service>",
+    ] {
         assert!(
             stderr.contains(form),
             "stderr does not list {form}: {stderr}"

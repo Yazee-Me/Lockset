@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as AnyhowContext, Result};
-use lockset_core::config::Config;
+use lockset_core::config::{Config, CustodySpec};
 use lockset_core::sopsfile::SopsFile;
 use lockset_core::{meta, Custody, IdentityView, PayloadError, Repo, SecretKey, Snapshot};
 use lockset_tools::custody::{EnvCustody, FileCustody, KeyringCustody, UnconfiguredCustody};
@@ -30,16 +30,24 @@ pub struct Context {
     pub config: Config,
 }
 
+/// The variable that selects custody when no flag does.
+pub const CUSTODY_ENV: &str = "LOCKSET_CUSTODY";
+
 impl Context {
     pub fn detect(cli: &Cli) -> Result<Self> {
         let root = find_root(repo_start(cli))?;
         let config = load_config(cli.config.as_deref(), &root)?;
         let interactive = std::io::stdin().is_terminal();
-        let custody = make_custody(cli.custody.as_deref(), &root, interactive, &config)?;
+        let spec = custody_spec(cli);
+        let custody = make_custody(spec.as_deref(), &root, interactive, &config)?;
         let codec = SopsCodec::new(&root, sops_bin(cli, &config), config.codec.min_version)
             .with_config(config.sops_config.clone());
         log::debug!("repository root {}", root.display());
         log::debug!("custody {}", custody.kind());
+        log::debug!(
+            "custody spec {}",
+            spec.as_deref().unwrap_or("auto (policy)")
+        );
         log::debug!("sops {}", codec.bin());
         log::debug!("sops config {}", config.sops_config);
         Ok(Self {
@@ -56,7 +64,8 @@ impl Context {
         self.custody.get()?.ok_or_else(|| match kind {
             lockset_core::CustodyKind::None => {
                 anyhow::Error::new(lockset_core::Error::custody(format!(
-                    "no identity source is configured; set {} or pass --custody file:<path>",
+                    "no identity source is configured; set {}, set LOCKSET_CUSTODY, or pass \
+                     --custody file:<path>",
                     self.config.custody.env
                 )))
             }
@@ -127,48 +136,51 @@ fn find_root(start: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// `--custody`, then the identity environment variable, then `custody.kind`,
-/// then the default: the keychain on a terminal and nothing otherwise — a
-/// container must not be handed whichever key a keychain happens to hold, nor
-/// be made to fail when it holds none.
+/// `--custody`, then `LOCKSET_CUSTODY`, then the identity environment variable,
+/// then `custody.kind`, then the default: the keychain on a terminal and
+/// nothing otherwise — a container must not be handed whichever key a keychain
+/// happens to hold, nor be made to fail when it holds none.
+fn custody_spec(cli: &Cli) -> Option<String> {
+    cli.custody.clone().or_else(|| {
+        std::env::var(CUSTODY_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    })
+}
+
 fn make_custody(
     spec: Option<&str>,
     root: &Path,
     interactive: bool,
     config: &Config,
 ) -> Result<Box<dyn Custody>> {
-    let kind = match spec {
-        Some(kind) => kind.to_owned(),
-        None if env_is_set(&config.custody.env) => return Ok(env_custody(&config.custody.env)),
-        None => config.custody.kind.clone(),
-    };
-    if spec.is_none() && kind == "auto" {
+    if let Some(spec) = spec {
+        return build_custody(&CustodySpec::parse(spec)?, root, config);
+    }
+    if env_is_set(&config.custody.env) {
+        return Ok(env_custody(&config.custody.env));
+    }
+    if config.custody.kind == "auto" {
         return Ok(if interactive {
-            keyring_custody(config)
+            keyring_custody(config, &config.custody.keychain_item)
         } else {
             Box::new(UnconfiguredCustody)
         });
     }
-    from_kind(&kind, root, config)
+    // Validated at load time; parsing again keeps one code path for every form.
+    let spec = CustodySpec::parse(&config.custody.kind)
+        .map_err(|error| usage::error(format!("custody.kind: {error}")))?;
+    build_custody(&spec, root, config)
 }
 
-fn from_kind(kind: &str, root: &Path, config: &Config) -> Result<Box<dyn Custody>> {
-    Ok(match kind {
-        "env" => env_custody(&config.custody.env),
-        "keyring" | "keyring:" => keyring_custody(config),
-        "none" => Box::new(UnconfiguredCustody),
-        other if other.starts_with("file:") => {
-            Box::new(FileCustody::new(&other["file:".len()..], root)?)
-        }
-        other if other.starts_with("keyring:") => Box::new(KeyringCustody::new(
-            &other["keyring:".len()..],
-            current_user(),
-        )),
-        other => {
-            return Err(usage::error(format!(
-                "unknown custody '{other}'; use env, keyring, file:<path>, or keyring:<service>"
-            )))
-        }
+fn build_custody(spec: &CustodySpec, root: &Path, config: &Config) -> Result<Box<dyn Custody>> {
+    Ok(match spec {
+        CustodySpec::Env(None) => env_custody(&config.custody.env),
+        CustodySpec::Env(Some(name)) => env_custody(name),
+        CustodySpec::Keyring(None) => keyring_custody(config, &config.custody.keychain_item),
+        CustodySpec::Keyring(Some(service)) => keyring_custody(config, service),
+        CustodySpec::File(path) => Box::new(FileCustody::new(path, root)?),
+        CustodySpec::None => Box::new(UnconfiguredCustody),
     })
 }
 
@@ -180,11 +192,22 @@ fn env_custody(var: &str) -> Box<dyn Custody> {
     Box::new(EnvCustody::new(var))
 }
 
-fn keyring_custody(config: &Config) -> Box<dyn Custody> {
-    Box::new(KeyringCustody::new(
-        &config.custody.keychain_item,
-        current_user(),
-    ))
+fn keyring_custody(config: &Config, service: &str) -> Box<dyn Custody> {
+    Box::new(keyring_entry(config, service))
+}
+
+fn keyring_entry(config: &Config, service: &str) -> KeyringCustody {
+    KeyringCustody::new(service, keychain_account(config))
+}
+
+/// The account a per-repo keychain item lives under: `custody.keychain_account`
+/// when set, else the current user.
+fn keychain_account(config: &Config) -> String {
+    config
+        .custody
+        .keychain_account
+        .clone()
+        .unwrap_or_else(current_user)
 }
 
 fn current_user() -> String {
@@ -298,10 +321,15 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::sync::Mutex;
 
+    use clap::Parser;
     use lockset_core::CustodyKind;
 
     use super::*;
+
+    /// The tests below read and write process-wide variables.
+    static ENV: Mutex<()> = Mutex::new(());
 
     /// Sets one variable for the test and puts the previous value back on drop.
     struct SetVar {
@@ -334,6 +362,7 @@ mod tests {
 
     #[test]
     fn default_custody_selects_on_the_current_variable_and_the_terminal() {
+        let _env = ENV.lock().unwrap();
         let key = SecretKey::generate();
         let guard = SetVar::new(KEY_ENV, key.expose());
         assert_eq!(default_kind(false), CustodyKind::Env);
@@ -354,9 +383,133 @@ mod tests {
         assert_eq!(usage::exit_code(&error), 2, "{error}");
         let message = error.to_string();
         assert!(message.contains("unknown custody 'bogus'"), "{message}");
-        for form in ["env", "keyring", "file:<path>", "keyring:<service>"] {
+        for form in [
+            "env:<NAME>",
+            "keyring",
+            "file:<absolute path>",
+            "keyring:<service>",
+        ] {
             assert!(message.contains(form), "{message} does not list {form}");
         }
+    }
+
+    #[test]
+    fn an_env_name_reads_that_variable() {
+        let _env = ENV.lock().unwrap();
+        let first = SecretKey::generate();
+        let second = SecretKey::generate();
+        let _first = SetVar::new("LOCKSET_TEST_KEY_A", first.expose());
+        let _second = SetVar::new("LOCKSET_TEST_KEY_B", second.expose());
+        let _default = SetVar::new(KEY_ENV, second.expose());
+
+        let custody = make_custody(
+            Some("env:LOCKSET_TEST_KEY_A"),
+            Path::new("/tmp"),
+            false,
+            &Config::default(),
+        )
+        .unwrap();
+        let key = custody
+            .get()
+            .unwrap()
+            .expect("the named variable holds a key");
+        assert_eq!(key.public().unwrap(), first.public().unwrap());
+        assert_ne!(key.public().unwrap(), second.public().unwrap());
+    }
+
+    #[test]
+    fn the_flag_wins_over_lockset_custody() {
+        let _env = ENV.lock().unwrap();
+        let _guard = SetVar::new(CUSTODY_ENV, "env:FROM_ENV");
+
+        let plain = Cli::parse_from(["lockset", "status"]);
+        assert_eq!(custody_spec(&plain).as_deref(), Some("env:FROM_ENV"));
+
+        let flagged = Cli::parse_from(["lockset", "--custody", "env:FROM_FLAG", "status"]);
+        assert_eq!(custody_spec(&flagged).as_deref(), Some("env:FROM_FLAG"));
+    }
+
+    #[test]
+    fn an_empty_lockset_custody_is_unset() {
+        let _env = ENV.lock().unwrap();
+        let _guard = SetVar::new(CUSTODY_ENV, "   ");
+        let cli = Cli::parse_from(["lockset", "status"]);
+
+        assert_eq!(custody_spec(&cli), None);
+    }
+
+    #[test]
+    fn a_config_kind_applies_off_a_terminal() {
+        let _env = ENV.lock().unwrap();
+        let config = Config::parse("[custody]\nkind = \"none\"\n").unwrap();
+        assert_eq!(
+            make_custody(None, Path::new("/tmp"), false, &config)
+                .unwrap()
+                .kind(),
+            CustodyKind::None
+        );
+
+        let config = Config::parse("[custody]\nkind = \"keyring\"\n").unwrap();
+        assert_eq!(
+            make_custody(None, Path::new("/tmp"), false, &config)
+                .unwrap()
+                .kind(),
+            CustodyKind::Keyring,
+            "an explicit config kind applies to non-interactive runs"
+        );
+    }
+
+    #[test]
+    fn the_identity_variable_wins_over_the_config_kind() {
+        let _env = ENV.lock().unwrap();
+        let key = SecretKey::generate();
+        let _guard = SetVar::new(KEY_ENV, key.expose());
+        let config = Config::parse("[custody]\nkind = \"none\"\n").unwrap();
+
+        assert_eq!(
+            make_custody(None, Path::new("/tmp"), false, &config)
+                .unwrap()
+                .kind(),
+            CustodyKind::Env
+        );
+    }
+
+    #[test]
+    fn a_config_env_name_selects_that_variable() {
+        let _env = ENV.lock().unwrap();
+        let key = SecretKey::generate();
+        let _other = SetVar::new("LOCKSET_TEST_CONFIG_KEY", key.expose());
+        let config = Config::parse("[custody]\nkind = \"env:LOCKSET_TEST_CONFIG_KEY\"\n").unwrap();
+
+        let custody = make_custody(None, Path::new("/tmp"), false, &config).unwrap();
+
+        assert_eq!(custody.kind(), CustodyKind::Env);
+        assert_eq!(
+            custody
+                .get()
+                .unwrap()
+                .expect("the configured variable")
+                .public()
+                .unwrap(),
+            key.public().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_per_repo_keychain_item_and_account_are_used() {
+        let config = Config::parse(
+            "[custody]\nkind = \"keyring\"\nkeychain_item = \"lockset-age-key-app\"\nkeychain_account = \"ci\"\n",
+        )
+        .unwrap();
+
+        let entry = keyring_entry(&config, &config.custody.keychain_item);
+        assert_eq!(entry.service(), "lockset-age-key-app");
+        assert_eq!(entry.account(), "ci");
+
+        // An explicit `keyring:<service>` keeps the configured account.
+        let entry = keyring_entry(&config, "shared-item");
+        assert_eq!(entry.service(), "shared-item");
+        assert_eq!(entry.account(), "ci");
     }
 
     /// Custody that cannot answer, as a container without a session keyring.

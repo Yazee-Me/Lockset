@@ -20,9 +20,10 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// env | keyring | file:<path> (absolute, mode 0600, outside the repo; default: env when
-    /// LOCKSET_AGE_KEY is set, else keyring on a terminal and none otherwise)
-    #[arg(long, global = true, value_name = "KIND")]
+    /// env[:NAME] | keyring[:SERVICE] | file:<absolute path> | none; overrides
+    /// LOCKSET_CUSTODY (default: env when the identity variable is set, else
+    /// keyring on a terminal and none otherwise)
+    #[arg(long, global = true, value_name = "SPEC")]
     pub custody: Option<String>,
 
     /// Print the plan and change nothing

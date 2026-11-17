@@ -41,18 +41,19 @@ Every mutating command prints its plan; `--dry-run` stops there.
   A sops failure names the payload and keeps every stderr line, indented under
   the error; the identity is replaced with `[redacted]` first, so a tool that
   echoes its environment cannot print the key into a CI log.
-- An age identity: `LOCKSET_AGE_KEY` when set (or the variable `custody.env`
-  names), the keychain item `lockset-age-key` (or `custody.keychain_item`), or
-  an explicit `--custody file:<path>`. Give `file:` an
+- An age identity, selected by `--custody`, `LOCKSET_CUSTODY`, or the repo
+  config: `env[:NAME]` (the default variable is `custody.env`,
+  `LOCKSET_AGE_KEY`), `keyring[:SERVICE]` (the item is `custody.keychain_item`,
+  `lockset-age-key`), `file:<absolute path>`, or `none`. Give `file:` an
   absolute path outside the repository — a mounted secret such as
   `/run/secrets/age-key`, for instance: the key file is created with mode 0600,
   and a symlink, a non-regular file, a path inside the repository, or a file
   readable by other users is refused. Without an identity the read-only commands
   still work: `status` and `who` report no identity, and `check` records it as a
   finding. A non-interactive run never falls back to the keychain implicitly; it
-  reports no identity and asks for `LOCKSET_AGE_KEY`, `--custody file:<path>`, or
-  an explicit `--custody keyring`. An unknown `--custody` form exits 2 and lists
-  the valid ones.
+  reports no identity and asks for the identity variable, `--custody`, or
+  `LOCKSET_CUSTODY`. An unknown or incomplete `--custody` form exits 2 and lists
+  the forms; see “Custody policy” below.
 - A repository with `.sops.yaml` at its root (or the `repo.sops_config` path),
   payloads as `secrets/**/*` (or `repo.payload_globs`), and recipients labelled
   by a trailing `# label,...` comment in recipient order. Payload paths are repository-relative: an absolute path, `..`, a
@@ -148,9 +149,10 @@ admin = "admin"                          # legacy label used while no registry e
 person_prefix = "dev-"                   # suggested for person add
 
 [custody]
-kind = "auto"                            # auto | env | keyring | file:<path> | none
-env = "LOCKSET_AGE_KEY"
-keychain_item = "lockset-age-key"
+kind = "auto"                            # auto | the same forms as --custody
+env = "LOCKSET_AGE_KEY"                  # what bare `env` reads
+keychain_item = "lockset-age-key"        # what bare `keyring` reads
+keychain_account = ""                    # empty: the current user
 
 [codec]
 sops = "sops"                            # --sops > LOCKSET_SOPS > this
@@ -166,7 +168,7 @@ lists the payloads it does have; `set` needs exactly one. A setting's precedence
 | repository root | `--repo` | `LOCKSET_REPO` | walks up from the cwd |
 | config file | `--config` | `LOCKSET_CONFIG` | `lockset.toml` at the root |
 | sops binary | `--sops` | `LOCKSET_SOPS` | `codec.sops` |
-| custody | `--custody` | the identity variable | `custody.*` |
+| custody | `--custody` | `LOCKSET_CUSTODY`, then the identity variable | `custody.*` |
 | payloads | `--payload` | — | `repo.default_payloads` |
 
 A config error names the file and the field and exits 2, so a typo cannot
@@ -175,6 +177,46 @@ quietly change which secrets a pipeline reads.
 Discovery walks the repository once, skips symlinks and hidden files, dedupes
 canonical paths, and keeps what `repo.payload_globs` matches; the dotenv-only
 format check still applies to everything it keeps.
+
+### Custody policy
+
+Custody is chosen in this order, and each layer is explicit about what it
+accepts:
+
+1. `--custody <spec>` — the flag wins over everything.
+2. `LOCKSET_CUSTODY` — the same grammar in the environment, so a pipeline can
+   switch sources without a flag. An empty value counts as unset.
+3. The identity variable (`custody.env`, `LOCKSET_AGE_KEY`) when it is set:
+   bare `env` custody.
+4. `custody.kind` — `auto` (the default), or any spec form. A concrete kind,
+   such as `keyring` or `env:DEPLOY_KEY`, applies to non-interactive runs too.
+5. `auto` off a terminal means **no identity source**: a container is never
+   handed whichever key the keychain happens to hold, and a mutation that needs
+   a key fails with `no identity in custody`. On a terminal `auto` uses the
+   keychain.
+
+The forms are `env`, `env:<NAME>`, `keyring`, `keyring:<service>`,
+`file:<absolute path>`, and `none`. A per-repo keychain item is
+`custody.keychain_item` plus `custody.keychain_account` (empty: the current
+user); `keyring:<service>` overrides the service and keeps the configured
+account. An unknown or incomplete spec exits 2 and lists the forms; nothing
+falls back to another source.
+
+```sh
+# Two pipelines on one machine, different secret sources
+lockset run --custody env:DEPLOY_KEY --payload secrets/prod/deploy.env -- ./deploy
+LOCKSET_CUSTODY=env:PLAN_KEY lockset set NEW --payload secrets/dev.env
+
+# A repository with its own keychain item
+#   [custody]
+#   kind = "keyring"
+#   keychain_item = "lockset-age-key-app"
+#   keychain_account = "ci"
+lockset doctor
+
+# A mounted key on a headless runner
+lockset run --custody file:/run/secrets/age-key --payload secrets/dev.env -- ./tool
+```
 
 ### Labels and the identity registry
 

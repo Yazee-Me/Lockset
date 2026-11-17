@@ -334,6 +334,16 @@ impl KeyringCustody {
         }
     }
 
+    /// The keychain service this custody reads (`lockset.toml` may set it).
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    /// The keychain account this custody reads.
+    pub fn account(&self) -> &str {
+        &self.account
+    }
+
     /// The item this repository created belongs to `security(1)`. macOS binds a
     /// keychain item's ACL to the binary that created it, so reading it from an
     /// unsigned CLI through the Security framework raises a prompt that a

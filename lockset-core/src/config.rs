@@ -133,6 +133,10 @@ impl Config {
         if let Some(item) = raw.custody.keychain_item {
             custody.keychain_item = non_empty("custody.keychain_item", &item)?.to_owned();
         }
+        if let Some(account) = raw.custody.keychain_account {
+            custody.keychain_account =
+                Some(non_empty("custody.keychain_account", &account)?.to_owned());
+        }
 
         let mut codec = CodecConfig::default();
         if let Some(bin) = raw.codec.sops {
@@ -278,15 +282,75 @@ impl Default for Labels {
     }
 }
 
+/// The custody forms `--custody`, `LOCKSET_CUSTODY`, and `custody.kind` accept.
+/// A parsed spec, so the grammar is data and every caller fails closed the
+/// same way: an unknown or incomplete form is a usage error (exit 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CustodySpec {
+    /// `env` or `env:<NAME>`: the key comes from a variable.
+    Env(Option<String>),
+    /// `keyring` or `keyring:<SERVICE>`: the OS credential store.
+    Keyring(Option<String>),
+    /// `file:<path>`: an explicit key file outside the repository.
+    File(String),
+    /// `none`: no identity source at all.
+    None,
+}
+
+impl CustodySpec {
+    /// The forms, for an error message that tells the user what to type.
+    pub const FORMS: &'static str =
+        "env, env:<NAME>, keyring, keyring:<service>, file:<absolute path>, or none";
+
+    pub fn parse(text: &str) -> Result<Self> {
+        let text = text.trim();
+        Ok(match text {
+            "" => {
+                return Err(Error::invalid(format!(
+                    "empty custody spec; use {}",
+                    Self::FORMS
+                )))
+            }
+            "env" | "env:" => Self::Env(None),
+            "keyring" | "keyring:" => Self::Keyring(None),
+            "none" => Self::None,
+            other => {
+                if let Some(name) = other.strip_prefix("env:") {
+                    // The text is trimmed, so this cannot be empty here.
+                    Self::Env(Some(name.trim().to_owned()))
+                } else if let Some(service) = other.strip_prefix("keyring:") {
+                    Self::Keyring(Some(service.trim().to_owned()))
+                } else if let Some(path) = other.strip_prefix("file:") {
+                    let path = path.trim();
+                    if path.is_empty() {
+                        return Err(Error::invalid(
+                            "file: custody needs a path to the key (file:<absolute path>)",
+                        ));
+                    }
+                    Self::File(path.to_owned())
+                } else {
+                    return Err(Error::invalid(format!(
+                        "unknown custody '{other}'; use {}",
+                        Self::FORMS
+                    )));
+                }
+            }
+        })
+    }
+}
+
 /// Where the identity comes from when no flag and no environment select it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustodyConfig {
-    /// `auto`, `env`, `keyring`, `file:<path>`, or `none`.
+    /// `auto`, or any [`CustodySpec`] form (`env`, `env:<NAME>`, `keyring`,
+    /// `keyring:<service>`, `file:<path>`, `none`).
     pub kind: String,
-    /// The variable `env` custody reads.
+    /// The variable bare `env` custody reads.
     pub env: String,
-    /// The keychain item `keyring` custody reads.
+    /// The keychain service bare `keyring` custody reads.
     pub keychain_item: String,
+    /// The keychain account; `None` means the current user.
+    pub keychain_account: Option<String>,
 }
 
 impl Default for CustodyConfig {
@@ -295,6 +359,7 @@ impl Default for CustodyConfig {
             kind: "auto".to_owned(),
             env: DEFAULT_KEY_ENV.to_owned(),
             keychain_item: DEFAULT_KEYCHAIN_ITEM.to_owned(),
+            keychain_account: None,
         }
     }
 }
@@ -433,15 +498,12 @@ fn validated_prefix(prefix: &str) -> Result<String> {
 }
 
 fn validated_kind(kind: &str) -> Result<String> {
-    let known = matches!(kind, "auto" | "none" | "env" | "keyring")
-        || kind.starts_with("keyring:")
-        || kind.starts_with("file:");
-    if !known {
-        return Err(Error::invalid(format!(
-            "custody.kind: '{kind}' is not one of auto, env, keyring, keyring:<service>, file:<path>, none"
-        )));
+    if kind == "auto" {
+        return Ok(kind.to_owned());
     }
-    Ok(kind.to_owned())
+    // The config shares the flag's grammar, so both fail closed the same way.
+    CustodySpec::parse(kind).map_err(|error| Error::invalid(format!("custody.kind: {error}")))?;
+    Ok(kind.trim().to_owned())
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -489,6 +551,7 @@ struct RawCustody {
     kind: Option<String>,
     env: Option<String>,
     keychain_item: Option<String>,
+    keychain_account: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -606,11 +669,85 @@ payload_globs = ["secrets/*.env", "../outside/*.env"]
     }
 
     #[test]
+    fn every_custody_form_parses() {
+        for (text, expected) in [
+            ("env", CustodySpec::Env(None)),
+            ("env:", CustodySpec::Env(None)),
+            (
+                "env:DEPLOY_KEY",
+                CustodySpec::Env(Some("DEPLOY_KEY".into())),
+            ),
+            ("keyring", CustodySpec::Keyring(None)),
+            ("keyring:", CustodySpec::Keyring(None)),
+            (
+                "keyring:lockset-age-key-app",
+                CustodySpec::Keyring(Some("lockset-age-key-app".into())),
+            ),
+            (
+                "file:/run/secrets/age-key",
+                CustodySpec::File("/run/secrets/age-key".into()),
+            ),
+            ("none", CustodySpec::None),
+        ] {
+            assert_eq!(CustodySpec::parse(text).unwrap(), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn an_invalid_custody_form_fails_closed_and_lists_the_forms() {
+        let unknown = CustodySpec::parse("magic").unwrap_err();
+        assert!(unknown.to_string().contains("unknown custody"), "{unknown}");
+        assert!(unknown.to_string().contains("env:<NAME>"), "{unknown}");
+        assert!(
+            unknown.to_string().contains("file:<absolute path>"),
+            "{unknown}"
+        );
+
+        let no_path = CustodySpec::parse("file:").unwrap_err();
+        assert!(no_path.to_string().contains("path"), "{no_path}");
+
+        // Whitespace after the colon means the bare form.
+        assert_eq!(
+            CustodySpec::parse("env:   ").unwrap(),
+            CustodySpec::Env(None)
+        );
+
+        let empty = CustodySpec::parse("   ").unwrap_err();
+        assert!(empty.to_string().contains("empty custody spec"), "{empty}");
+    }
+
+    #[test]
+    fn the_config_kind_shares_the_flag_grammar() {
+        let config = Config::parse("[custody]\nkind = \"env:DEPLOY_KEY\"\n").unwrap();
+        assert_eq!(config.custody.kind, "env:DEPLOY_KEY");
+
+        let error = Config::parse("[custody]\nkind = \"magic\"\n").unwrap_err();
+        assert!(error.to_string().contains("custody.kind"), "{error}");
+        assert!(error.to_string().contains("env:<NAME>"), "{error}");
+    }
+
+    #[test]
+    fn the_keychain_account_is_per_repo() {
+        let config = Config::parse(
+            "[custody]\nkind = \"keyring\"\nkeychain_item = \"lockset-age-key-app\"\nkeychain_account = \"ci\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.custody.keychain_item, "lockset-age-key-app");
+        assert_eq!(config.custody.keychain_account.as_deref(), Some("ci"));
+
+        let empty = Config::parse("[custody]\nkeychain_account = \"  \"\n").unwrap_err();
+        assert!(empty.to_string().contains("keychain_account"), "{empty}");
+    }
+
+    #[test]
     fn an_unknown_custody_kind_is_refused() {
         let error = Config::parse("[custody]\nkind = \"magic\"\n").unwrap_err();
 
         assert!(error.to_string().contains("custody.kind"), "{error}");
-        assert!(error.to_string().contains("file:<path>"), "{error}");
+        assert!(
+            error.to_string().contains("file:<absolute path>"),
+            "{error}"
+        );
     }
 
     const ADMIN: &str = "age1p243ylp98pr939vj8eqsmaczq8c9gwxwnlupz9pvelpfj6ha0cgqjsue6x";

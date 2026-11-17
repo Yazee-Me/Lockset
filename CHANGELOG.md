@@ -59,6 +59,17 @@
 
 ### Added
 
+- Custody forms: `--custody env:<NAME>` reads a named variable, so two
+  pipelines on one machine can keep distinct sources, and `LOCKSET_CUSTODY`
+  selects custody from the environment (the flag still wins; an empty value is
+  unset). `custody.kind` accepts the same grammar, and
+  `custody.keychain_item`/`custody.keychain_account` give a repository its own
+  keychain item, including for `keyring:<service>`.
+- The custody policy is documented and enforced the same way everywhere: flag,
+  `LOCKSET_CUSTODY`, the identity variable, `custody.kind`, then `auto` — which
+  is the keychain on a terminal and no source off one. Invalid or incomplete
+  specs (including a bare `file:`) exit 2 and list the forms.
+
 - **The identity registry lives in `lockset.toml`.** `[[identities]]` entries
   carry `label`, `public`, and optional `roles`; duplicate labels or keys and
   invalid fields are refused by name (exit 2). Once the registry exists it is

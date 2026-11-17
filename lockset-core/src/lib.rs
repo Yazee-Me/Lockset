@@ -19,7 +19,7 @@ pub mod snapshot;
 pub mod sopsfile;
 pub mod version;
 
-pub use config::{Config, Globs, Labels};
+pub use config::{Config, CustodySpec, Globs, Labels};
 pub use digest::digest;
 pub use error::{Error, Result};
 pub use model::{CustodyKind, Label, PathId, PubKey, SecretKey};

@@ -313,8 +313,15 @@ fn doctor(context: &wiring::Context, cli: &Cli) -> Result<u8> {
         name: "legacy identity sources".into(),
         ok: true,
         detail: format!(
-            "only {} and the {} item are read",
-            context.config.custody.env, context.config.custody.keychain_item
+            "only {} and the {} item (account {}) are read",
+            context.config.custody.env,
+            context.config.custody.keychain_item,
+            context
+                .config
+                .custody
+                .keychain_account
+                .clone()
+                .unwrap_or_else(|| { "current user".to_owned() })
         ),
     });
 

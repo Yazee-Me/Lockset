@@ -17,38 +17,29 @@ impl FsRepo {
         &self.root
     }
 
-    fn resolve(&self, id: &PathId) -> Result<PathBuf> {
-        let rel = id.as_str();
-        let unsafe_path = rel.starts_with('/')
-            || rel
-                .split('/')
-                .any(|segment| segment.is_empty() || segment == "..");
-        if unsafe_path {
-            return Err(Error::invalid(format!(
-                "refusing an absolute or traversing path: {rel}"
-            )));
-        }
-        Ok(self.root.join(rel))
+    /// `PathId` already excludes absolute paths and traversal, so joining is
+    /// the whole job here.
+    fn resolve(&self, id: &PathId) -> PathBuf {
+        self.root.join(id.as_str())
     }
 }
 
 impl Repo for FsRepo {
-    fn list(&self, prefix: &str) -> Result<Vec<PathId>> {
-        let base = self.root.join(prefix);
+    fn list(&self, prefix: &PathId) -> Result<Vec<PathId>> {
+        let base = self.root.join(prefix.as_str());
         let mut out = Vec::new();
-        collect(&base, &self.root, &mut out)
-            .map_err(|e| Error::failed(format!("cannot list {}: {e}", base.display())))?;
+        collect(&base, &self.root, &mut out)?;
         out.sort();
         Ok(out)
     }
 
     fn read(&self, id: &PathId) -> Result<Vec<u8>> {
-        let path = self.resolve(id)?;
+        let path = self.resolve(id);
         std::fs::read(&path).map_err(|e| Error::failed(format!("cannot read {id}: {e}")))
     }
 
     fn write(&self, id: &PathId, bytes: &[u8]) -> Result<()> {
-        let path = self.resolve(id)?;
+        let path = self.resolve(id);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| Error::failed(format!("cannot create {}: {e}", parent.display())))?;
@@ -69,18 +60,22 @@ impl Repo for FsRepo {
     }
 }
 
-fn collect(dir: &Path, root: &Path, out: &mut Vec<PathId>) -> std::io::Result<()> {
+fn collect(dir: &Path, root: &Path, out: &mut Vec<PathId>) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| Error::failed(format!("cannot list {}: {e}", dir.display())))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| Error::failed(format!("cannot list {}: {e}", dir.display())))?;
         let path = entry.path();
         if path.is_dir() {
             collect(&path, root, out)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("env") {
             if let Ok(rel) = path.strip_prefix(root) {
-                out.push(PathId::new(rel.to_string_lossy().replace('\\', "/")));
+                let rel = rel.to_string_lossy().replace('\\', "/");
+                out.push(PathId::parse(&rel)?);
             }
         }
     }

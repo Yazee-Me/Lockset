@@ -164,12 +164,37 @@ fn truncate(s: &str) -> String {
 }
 
 /// A path relative to the repository root: a payload or `.sops.yaml`.
+///
+/// `parse` is the only constructor, so every `Repo` and `Codec` call receives a
+/// path that stays inside the repository and that an external tool cannot read
+/// as an option.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PathId(String);
 
 impl PathId {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
+    /// Reject anything that could leave the repository or change how a child
+    /// process reads the argument: an absolute path, an empty or `..` segment,
+    /// a backslash, or a leading `-`.
+    pub fn parse(s: &str) -> Result<Self> {
+        let why = if s.is_empty() {
+            Some("the path is empty")
+        } else if s.starts_with('/') {
+            Some("the path is absolute")
+        } else if s.contains('\\') {
+            Some("backslashes are not separators here")
+        } else if s.starts_with('-') {
+            Some("a leading '-' reads as an option")
+        } else if s.split('/').any(str::is_empty) {
+            Some("it has an empty segment")
+        } else if s.split('/').any(|segment| segment == "..") {
+            Some("'..' leaves the repository")
+        } else {
+            None
+        };
+        match why {
+            Some(why) => Err(Error::invalid(format!("invalid path '{s}': {why}"))),
+            None => Ok(Self(s.to_owned())),
+        }
     }
 
     pub fn as_str(&self) -> &str {
@@ -205,6 +230,38 @@ impl fmt::Display for CustodyKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_ids_reject_paths_that_leave_the_repository_or_read_as_options() {
+        for value in [
+            "",
+            "../key.txt",
+            "secrets/../../key.txt",
+            "secrets/../key.txt",
+            "/etc/passwd",
+            "secrets//dev.env",
+            "secrets/",
+            "secrets\\dev.env",
+            "-x",
+        ] {
+            let error = PathId::parse(value).expect_err(value);
+            assert!(
+                error.to_string().contains(value),
+                "the error must name the offending value: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn path_ids_accept_repository_relative_paths() {
+        for value in [
+            ".sops.yaml",
+            "secrets/dev.env",
+            "secrets/prod/host-main.env",
+        ] {
+            assert_eq!(PathId::parse(value).unwrap().as_str(), value);
+        }
+    }
 
     #[test]
     fn label_rules() {

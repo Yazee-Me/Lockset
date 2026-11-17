@@ -161,7 +161,11 @@ mod tests {
 
     #[test]
     fn parses_flat_dotenv_metadata() {
-        let meta = parse(PathId::new("secrets/prod/host-main.env"), &flat_payload()).unwrap();
+        let meta = parse(
+            PathId::parse("secrets/prod/host-main.env").unwrap(),
+            &flat_payload(),
+        )
+        .unwrap();
         assert!(meta.encrypted);
         assert_eq!(
             meta.keys,
@@ -179,7 +183,7 @@ mod tests {
             "CLOUDFLARE_TUNNEL_TOKEN_MAIN: ENC[AES256_GCM,data:abc,type:str]\n\
              sops:\n    age:\n        - recipient: {A}\n          enc: |\n            x\n    version: 3.13.3\n"
         );
-        let meta = parse(PathId::new("secrets/prod/x.yaml"), &text).unwrap();
+        let meta = parse(PathId::parse("secrets/prod/x.yaml").unwrap(), &text).unwrap();
         assert!(meta.encrypted);
         assert_eq!(meta.recipients.len(), 1);
     }
@@ -187,13 +191,13 @@ mod tests {
     #[test]
     fn flags_plaintext_values() {
         let text = "A=secret\nsops:\n    version: 3.13.3\n";
-        let meta = parse(PathId::new("secrets/prod/x.env"), text).unwrap();
+        let meta = parse(PathId::parse("secrets/prod/x.env").unwrap(), text).unwrap();
         assert_eq!(meta.plaintext, vec!["A"]);
     }
 
     #[test]
     fn plain_file_is_not_encrypted() {
-        let meta = parse(PathId::new("secrets/prod/x.env"), "A=1\nB=2\n").unwrap();
+        let meta = parse(PathId::parse("secrets/prod/x.env").unwrap(), "A=1\nB=2\n").unwrap();
         assert!(!meta.encrypted);
         assert!(meta.recipients.is_empty());
         assert_eq!(meta.keys.len(), 2);

@@ -22,7 +22,7 @@ pub trait Custody {
 
 /// Repository artifacts: payloads and `.sops.yaml`, addressed by relative path.
 pub trait Repo {
-    fn list(&self, prefix: &str) -> Result<Vec<PathId>>;
+    fn list(&self, prefix: &PathId) -> Result<Vec<PathId>>;
     fn read(&self, id: &PathId) -> Result<Vec<u8>>;
     fn write(&self, id: &PathId, bytes: &[u8]) -> Result<()>;
 }

@@ -104,12 +104,12 @@ fn current_user() -> String {
 }
 
 pub fn snapshot(context: &Context) -> Result<Snapshot> {
-    let sops_text = String::from_utf8(context.repo.read(&PathId::new(".sops.yaml"))?)
+    let sops_text = String::from_utf8(context.repo.read(&PathId::parse(".sops.yaml")?)?)
         .context(".sops.yaml is not UTF-8")?;
     let sops = SopsFile::parse(&sops_text)?;
 
     let mut payloads = Vec::new();
-    for id in context.repo.list("secrets")? {
+    for id in context.repo.list(&PathId::parse("secrets")?)? {
         let text = String::from_utf8(context.repo.read(&id)?)
             .with_context(|| format!("{id} is not UTF-8"))?;
         payloads.push(meta::parse(id, &text)?);

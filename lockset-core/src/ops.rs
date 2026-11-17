@@ -290,7 +290,7 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
 
     let text = snapshot.sops.render_with(&sets)?;
     plan.push(crate::plan::Change::WriteFile {
-        path: PathId::new(".sops.yaml"),
+        path: PathId::parse(".sops.yaml")?,
         contents: text,
     });
     for payload in &snapshot.payloads {
@@ -444,7 +444,7 @@ pub fn revoke(snapshot: &Snapshot, request: &RevokeRequest) -> Result<crate::pla
     let text = snapshot.sops.render_with(&sets)?;
     let mut plan = crate::plan::Plan::default();
     plan.push(crate::plan::Change::WriteFile {
-        path: PathId::new(".sops.yaml"),
+        path: PathId::parse(".sops.yaml")?,
         contents: text,
     });
 
@@ -532,7 +532,7 @@ mod tests {
             text.push_str(&format!("sops_age__list_{i}__map_recipient={recipient}\n"));
         }
         text.push_str("sops_version=3.13.3\nsops_mac=ENC[a,type:str]\n");
-        crate::meta::parse(PathId::new(id), &text).unwrap()
+        crate::meta::parse(PathId::parse(id).unwrap(), &text).unwrap()
     }
 
     fn snapshot(identity: Option<&str>) -> Snapshot {
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn rotate_rejects_an_unknown_payload() {
-        let ids = vec![PathId::new("secrets/prod/nope.env")];
+        let ids = vec![PathId::parse("secrets/prod/nope.env").unwrap()];
         assert!(rotate(&snapshot(Some(A)), Some(&ids)).is_err());
     }
 
@@ -615,7 +615,7 @@ mod tests {
             key: PubKey::parse("age1y4gs9hk93n3mpvhwydaq7uz4mn3a0esf0wfh3md2v2qz4hye9frsfpelwh")
                 .unwrap(),
             label: Label::parse("dev-test").unwrap(),
-            only: Some(vec![PathId::new("secrets/prod/host-main.env")]),
+            only: Some(vec![PathId::parse("secrets/prod/host-main.env").unwrap()]),
         };
         let plan = grant(&snap, &request).unwrap();
         assert_eq!(plan.changes.len(), 2);

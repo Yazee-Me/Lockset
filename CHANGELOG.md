@@ -32,3 +32,7 @@
   same-user process. A non-interactive run refuses the keychain instead of
   leaking the key, and points at `--custody env` or `--custody file:<path>`;
   keychain lookup and delete now match the account as well as the service.
+- Payload paths are validated before any sops call: an absolute path, `..`, a
+  backslash, an empty segment, or a leading `-` now exits 2 and names the
+  offending value. `PathId` can no longer be built unchecked, so `Repo` and
+  `Codec` operations only ever receive repository-relative paths.

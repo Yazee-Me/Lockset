@@ -36,7 +36,9 @@ Every mutating command prints its plan; `--dry-run` stops there.
   `lockset-age-key`, or an explicit `--custody file:<path>`.
 - A repository with `.sops.yaml` at its root, payloads as `secrets/**/*.env`,
   and recipients labelled by a trailing `# label,...` comment in recipient
-  order.
+  order. Payload paths are repository-relative: an absolute path, `..`, a
+  backslash, an empty segment, or a leading `-` is a usage error (exit 2) before
+  any sops call.
 
 ## Use
 
@@ -67,6 +69,9 @@ mise run install     # link target/release/lockset into ~/.local/bin
   testable without credentials and reusable from another front end.
 - Plans are data (`Change` values) and `exec::apply` is the only place
   mutations happen, so `--dry-run` and tests share one path.
+- Paths are `PathId` values parsed relative to the repository root, so no
+  `Repo` or `Codec` call can be handed a traversal or a value sops would read
+  as an option.
 - Rewrites touch only the `age:` line of `.sops.yaml` and are followed by a
   decrypt, because a structurally valid file with lost values only shows up on
   read.

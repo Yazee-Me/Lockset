@@ -12,6 +12,14 @@ pub struct IdentityView {
     pub label: Option<Label>,
 }
 
+/// A payload that could not be read or parsed. Reports surface it and carry on
+/// with the rest; unrelated payloads stay usable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PayloadError {
+    pub id: PathId,
+    pub error: String,
+}
+
 /// Everything the read-only operations need, assembled by the caller from
 /// ports. Ops never fetch anything themselves.
 #[derive(Debug, Clone)]
@@ -27,6 +35,8 @@ pub struct Snapshot {
     /// copies the digests of the files it touches, so an apply can tell that an
     /// input changed in between.
     pub digests: BTreeMap<PathId, String>,
+    /// Payloads that could not be read or parsed, with the reason.
+    pub payload_errors: Vec<PayloadError>,
 }
 
 impl Snapshot {
@@ -43,7 +53,19 @@ impl Snapshot {
             identity,
             identity_error: None,
             digests: BTreeMap::new(),
+            payload_errors: Vec::new(),
         }
+    }
+
+    /// Attach the payloads that could not be parsed.
+    pub fn with_payload_errors(mut self, errors: Vec<PayloadError>) -> Self {
+        self.payload_errors = errors;
+        self
+    }
+
+    /// The parse error recorded for a payload, when it has one.
+    pub fn payload_error(&self, id: &PathId) -> Option<&PayloadError> {
+        self.payload_errors.iter().find(|error| &error.id == id)
     }
 
     /// Attach the digests of the files this snapshot was built from.

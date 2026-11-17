@@ -105,6 +105,17 @@ pub fn status(snapshot: &Snapshot) -> Report {
         }
     }
 
+    if !snapshot.payload_errors.is_empty() {
+        report.blank();
+        report.line(format!(
+            "unreadable payloads: {}",
+            snapshot.payload_errors.len()
+        ));
+        for error in &snapshot.payload_errors {
+            report.line(format!("  {}: {}", error.id, error.error));
+        }
+    }
+
     let drift = snapshot.drift();
     report.blank();
     if drift.is_empty() {
@@ -132,6 +143,9 @@ pub fn status(snapshot: &Snapshot) -> Report {
 fn next_step(snapshot: &Snapshot) -> String {
     if snapshot.identity.is_none() {
         return "next: lockset key import".into();
+    }
+    if !snapshot.payload_errors.is_empty() {
+        return "next: fix the unreadable payloads above".into();
     }
     let drift = snapshot.drift();
     if !drift.is_empty() {
@@ -184,6 +198,21 @@ pub fn checks(snapshot: &Snapshot) -> Vec<Check> {
             detail: "none — set LOCKSET_AGE_KEY, pass --custody file:<path>, or run \
                      `lockset key import`"
                 .into(),
+        },
+    });
+
+    out.push(Check {
+        name: "payloads parse".into(),
+        ok: snapshot.payload_errors.is_empty(),
+        detail: if snapshot.payload_errors.is_empty() {
+            format!("{} payloads", snapshot.payloads.len())
+        } else {
+            snapshot
+                .payload_errors
+                .iter()
+                .map(|error| format!("{}: {}", error.id, error.error))
+                .collect::<Vec<_>>()
+                .join("; ")
         },
     });
 
@@ -604,6 +633,42 @@ mod tests {
             report.contains("identity: unavailable — no session keyring"),
             "{report}"
         );
+    }
+
+    #[test]
+    fn status_and_checks_report_payload_errors_with_the_path() {
+        let error = crate::snapshot::PayloadError {
+            id: PathId::parse("secrets/bad.env").unwrap(),
+            error: "not an age public key: 'nope'".to_owned(),
+        };
+        let snap = snapshot(Some(A)).with_payload_errors(vec![error]);
+
+        let report = status(&snap).render();
+        assert!(report.contains("unreadable payloads: 1"), "{report}");
+        assert!(
+            report.contains("secrets/bad.env: not an age public key"),
+            "{report}"
+        );
+        assert!(
+            report.contains("next: fix the unreadable payloads"),
+            "{report}"
+        );
+
+        let checks = checks(&snap);
+        let parse = checks.iter().find(|c| c.name == "payloads parse").unwrap();
+        assert!(!parse.ok);
+        assert!(
+            parse.detail.contains("secrets/bad.env") && parse.detail.contains("not an age"),
+            "{parse:?}"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_without_payload_errors_passes_the_parse_check() {
+        let checks = checks(&snapshot(Some(A)));
+        let parse = checks.iter().find(|c| c.name == "payloads parse").unwrap();
+        assert!(parse.ok);
+        assert!(parse.detail.contains("2 payloads"), "{parse:?}");
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context as AnyhowContext, Result};
 use lockset_core::sopsfile::SopsFile;
-use lockset_core::{meta, Custody, IdentityView, PathId, Repo, SecretKey, Snapshot};
+use lockset_core::{meta, Custody, IdentityView, PathId, PayloadError, Repo, SecretKey, Snapshot};
 use lockset_tools::custody::{EnvCustody, FileCustody, KeyringCustody, UnconfiguredCustody};
 use lockset_tools::fs_repo::FsRepo;
 use lockset_tools::lock::Lock;
@@ -152,11 +152,38 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
     let sops = SopsFile::parse(&sops_text)?;
 
     let mut payloads = Vec::new();
+    let mut payload_errors = Vec::new();
     for id in context.repo.list(&PathId::parse("secrets")?)? {
-        let bytes = context.repo.read(&id)?;
+        // A payload that cannot be read or parsed is a finding, not a reason to
+        // abandon the report: the rest of the repository stays usable.
+        let bytes = match context.repo.read(&id) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                payload_errors.push(PayloadError {
+                    id,
+                    error: error.to_string(),
+                });
+                continue;
+            }
+        };
         digests.insert(id.clone(), lockset_core::digest(&bytes));
-        let text = String::from_utf8(bytes).with_context(|| format!("{id} is not UTF-8"))?;
-        payloads.push(meta::parse(id, &text)?);
+        let text = match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => {
+                payload_errors.push(PayloadError {
+                    id,
+                    error: "not UTF-8".to_owned(),
+                });
+                continue;
+            }
+        };
+        match meta::parse(id.clone(), &text) {
+            Ok(payload) => payloads.push(payload),
+            Err(error) => payload_errors.push(PayloadError {
+                id,
+                error: error.to_string(),
+            }),
+        }
     }
 
     let (identity, identity_error) = match context.custody.get() {
@@ -178,7 +205,8 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
     };
 
     let mut snapshot = Snapshot::new(context.root.display().to_string(), sops, payloads, identity)
-        .with_digests(digests);
+        .with_digests(digests)
+        .with_payload_errors(payload_errors);
     if let Some(error) = identity_error {
         snapshot = snapshot.identity_unavailable(error);
     }

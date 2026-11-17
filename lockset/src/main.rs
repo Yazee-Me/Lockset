@@ -376,6 +376,9 @@ fn set(
     let id = payload_id(payload)?;
     let snapshot = wiring::snapshot(context)?;
     if snapshot.payload(&id).is_none() {
+        if let Some(error) = snapshot.payload_error(&id) {
+            bail!("cannot use {}: {}", error.id, error.error);
+        }
         bail!("no such payload: {payload}");
     }
     let value = input::read_value(source)?;

@@ -21,4 +21,4 @@ pub use error::{Error, Result};
 pub use model::{CustodyKind, Label, PathId, PubKey, SecretKey};
 pub use plan::{Change, Plan, SecretValue};
 pub use ports::{Codec, Custody, Repo};
-pub use snapshot::{IdentityView, Snapshot};
+pub use snapshot::{IdentityView, PayloadError, Snapshot};

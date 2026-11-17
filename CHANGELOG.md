@@ -58,6 +58,11 @@
 
 ### Fixed
 
+- A payload that cannot be parsed no longer aborts `status`, `who`, or `check`:
+  it becomes a finding with its path and error, `check` gains a `payloads
+  parse` check, and unrelated payloads — including `rotate --all` — keep
+  working. Payload discovery skips symlinks and dedupes canonical paths, so a
+  self-referential link cannot duplicate or loop the inventory.
 - `--dry-run` builds and renders the plan before custody is consulted, so
   `grant`, `revoke`, `rotate`, `person add`/`remove`, `set`, `key import`, and
   `key forget` can be planned with no identity; the key is required only to

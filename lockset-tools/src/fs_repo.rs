@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lockset_core::{Error, PathId, Repo, Result};
@@ -28,7 +29,8 @@ impl Repo for FsRepo {
     fn list(&self, prefix: &PathId) -> Result<Vec<PathId>> {
         let base = self.root.join(prefix.as_str());
         let mut out = Vec::new();
-        collect(&base, &self.root, &mut out)?;
+        let mut seen = BTreeSet::new();
+        collect(&base, &self.root, &mut seen, &mut out)?;
         out.sort();
         Ok(out)
     }
@@ -81,24 +83,127 @@ impl Repo for FsRepo {
     }
 }
 
-fn collect(dir: &Path, root: &Path, out: &mut Vec<PathId>) -> Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
+/// Discover `.env` payloads without following symlinks: a symlink can duplicate
+/// a payload or loop the tree, so it is skipped. Canonical paths are deduped so
+/// no payload is reported twice.
+fn collect(
+    dir: &Path,
+    root: &Path,
+    seen: &mut BTreeSet<PathBuf>,
+    out: &mut Vec<PathId>,
+) -> Result<()> {
+    // `symlink_metadata` does not follow the prefix either, so a symlinked
+    // `secrets` directory is skipped instead of being walked twice.
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(Error::failed(format!(
+                "cannot inspect {}: {error}",
+                dir.display()
+            )))
+        }
     }
     let entries = std::fs::read_dir(dir)
         .map_err(|e| Error::failed(format!("cannot list {}: {e}", dir.display())))?;
     for entry in entries {
         let entry =
             entry.map_err(|e| Error::failed(format!("cannot list {}: {e}", dir.display())))?;
+        let file_type = entry.file_type().map_err(|error| {
+            Error::failed(format!(
+                "cannot inspect {}: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
-            collect(&path, root, out)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("env") {
-            if let Ok(rel) = path.strip_prefix(root) {
-                let rel = rel.to_string_lossy().replace('\\', "/");
-                out.push(PathId::parse(&rel)?);
+        if file_type.is_dir() {
+            collect(&path, root, seen, out)?;
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("env") {
+            let canonical = path.canonicalize().map_err(|error| {
+                Error::failed(format!("cannot resolve {}: {error}", path.display()))
+            })?;
+            if !seen.insert(canonical) {
+                continue;
             }
+            let rel = path.strip_prefix(root).map_err(|_| {
+                Error::failed(format!("{} is outside the repository", path.display()))
+            })?;
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            out.push(PathId::parse(&rel)?);
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("lockset-fs-repo-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("secrets/sub")).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ids(repo: &FsRepo) -> Vec<String> {
+        repo.list(&PathId::parse("secrets").unwrap())
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn listing_skips_symlinks_and_never_duplicates_a_payload() {
+        let root = TempDir::new("symlinks");
+        std::fs::write(root.0.join("secrets/a.env"), "A=1\n").unwrap();
+        std::fs::write(root.0.join("secrets/sub/b.env"), "B=1\n").unwrap();
+        // A symlinked file would duplicate a.env; a symlinked directory would
+        // duplicate sub; a self-referential symlink would loop the tree.
+        symlink(
+            root.0.join("secrets/a.env"),
+            root.0.join("secrets/link.env"),
+        )
+        .unwrap();
+        symlink(root.0.join("secrets/sub"), root.0.join("secrets/alias")).unwrap();
+        symlink("../..", root.0.join("secrets/sub/loop")).unwrap();
+
+        let repo = FsRepo::new(&root.0);
+
+        assert_eq!(ids(&repo), ["secrets/a.env", "secrets/sub/b.env"]);
+    }
+
+    #[test]
+    fn a_symlinked_prefix_is_not_followed() {
+        let root = TempDir::new("prefix");
+        std::fs::write(root.0.join("secrets/a.env"), "A=1\n").unwrap();
+        std::fs::create_dir_all(root.0.join("real")).unwrap();
+        std::fs::write(root.0.join("real/b.env"), "B=1\n").unwrap();
+        symlink(root.0.join("real"), root.0.join("linked")).unwrap();
+
+        let repo = FsRepo::new(&root.0);
+
+        assert!(repo
+            .list(&PathId::parse("linked").unwrap())
+            .unwrap()
+            .is_empty());
+    }
 }

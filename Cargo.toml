@@ -6,7 +6,9 @@ members = ["lockset-core", "lockset-tools", "lockset"]
 version = "0.1.0"
 edition = "2021"
 # The toolchain CI proves the workspace builds with (see the msrv job).
-rust-version = "1.88"
+# 1.89 is required by the locked graph: aes 0.9.3 (secret-service) and
+# uuid 1.29.0 (zbus) declare 1.89 as their own minimum.
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Yazee-Me/Lockset"
 homepage = "https://github.com/Yazee-Me/Lockset"

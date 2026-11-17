@@ -63,7 +63,7 @@
 
 - **Package metadata, licenses, and install paths are complete.** `LICENSE-MIT`
   and `LICENSE-APACHE` ship at the repository root and in every crate; each
-  crate declares `rust-version` (1.88, checked in CI), `repository`,
+  crate declares `rust-version` (1.89, checked in CI), `repository`,
   `documentation`, `readme`, `keywords`, `categories`, and the path
   dependencies name the shared version, so `cargo package --workspace` and
   `cargo publish` work in order (core, tools, CLI). `cargo binstall` metadata

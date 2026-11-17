@@ -60,11 +60,11 @@ jobs:
           ./scripts/check-binstall.sh
 
   msrv:
-    name: MSRV (1.88)
+    name: MSRV (1.89)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.89
       - name: The declared rust-version builds the workspace
         run: cargo check --workspace --all-targets
 

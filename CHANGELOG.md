@@ -36,3 +36,9 @@
   backslash, an empty segment, or a leading `-` now exits 2 and names the
   offending value. `PathId` can no longer be built unchecked, so `Repo` and
   `Codec` operations only ever receive repository-relative paths.
+- `--custody file:<path>` enforces what its docstring promised: the path is
+  resolved through symlinks and refused when it lands inside the repository,
+  symlinks and non-regular files are refused, a key file readable by group or
+  others (mode 0600 required) is rejected with a `chmod 600` hint, and a new key
+  file is created with mode 0600 through the open options instead of being
+  chmodded after the secret was written.

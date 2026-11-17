@@ -33,7 +33,11 @@ Every mutating command prints its plan; `--dry-run` stops there.
 
 - `sops` 3.13 or newer on `PATH` (override with `LOCKSET_SOPS`).
 - An age identity: `LOCKSET_AGE_KEY` when set, the keychain item
-  `lockset-age-key`, or an explicit `--custody file:<path>`.
+  `lockset-age-key`, or an explicit `--custody file:<path>`. Give `file:` an
+  absolute path outside the repository — a mounted secret such as
+  `/run/secrets/age-key`, for instance: the key file is created with mode 0600,
+  and a symlink, a non-regular file, a path inside the repository, or a file
+  readable by other users is refused.
 - A repository with `.sops.yaml` at its root, payloads as `secrets/**/*.env`,
   and recipients labelled by a trailing `# label,...` comment in recipient
   order. Payload paths are repository-relative: an absolute path, `..`, a
@@ -91,6 +95,10 @@ mise run install     # link target/release/lockset into ~/.local/bin
 - The private key reaches sops as `SOPS_AGE_KEY`, and the sops child starts
   without the parent's identity or any other `SOPS_*` variable, so no inherited
   override can redirect it. The key never reaches argv or a file.
+- `--custody file:<path>` keeps the identity outside the repository and
+  private: the path is resolved through symlinks before that check, symlinks
+  and non-regular files are refused, and a key file must be 0600 or stricter.
+  New files are created with mode 0600, never written first and chmodded after.
 - `key import` never puts the identity in an argument list: on macOS the
   keychain write asks `security(1)` to prompt for it, so `ps` cannot show it to
   a same-user process. A non-interactive run refuses to store it and points at

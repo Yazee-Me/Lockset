@@ -22,7 +22,7 @@ pub struct Context {
 impl Context {
     pub fn detect(cli: &Cli) -> Result<Self> {
         let root = find_root(cli.repo.as_deref())?;
-        let custody = make_custody(cli.custody.as_deref());
+        let custody = make_custody(cli.custody.as_deref(), &root)?;
         Ok(Self {
             repo: FsRepo::new(&root),
             codec: SopsCodec::new(&root),
@@ -56,12 +56,12 @@ fn find_root(start: Option<&Path>) -> Result<PathBuf> {
     }
 }
 
-fn make_custody(spec: Option<&str>) -> Box<dyn Custody> {
-    match spec {
+fn make_custody(spec: Option<&str>, root: &Path) -> Result<Box<dyn Custody>> {
+    Ok(match spec {
         Some("env") => env_custody(),
         Some("keyring") => keyring_custody(),
         Some(other) if other.starts_with("file:") => {
-            Box::new(FileCustody::new(&other["file:".len()..]))
+            Box::new(FileCustody::new(&other["file:".len()..], root)?)
         }
         Some("keyring:") => keyring_custody(),
         Some(other) if other.starts_with("keyring:") => Box::new(KeyringCustody::new(
@@ -73,7 +73,7 @@ fn make_custody(spec: Option<&str>) -> Box<dyn Custody> {
             default_custody()
         }
         None => default_custody(),
-    }
+    })
 }
 
 fn default_custody() -> Box<dyn Custody> {

@@ -14,7 +14,8 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "DIR")]
     pub repo: Option<PathBuf>,
 
-    /// env | keyring | file:<path> (default: env when LOCKSET_AGE_KEY is set, else keyring)
+    /// env | keyring | file:<path> (absolute, mode 0600, outside the repo; default: env when
+    /// LOCKSET_AGE_KEY is set, else keyring)
     #[arg(long, global = true, value_name = "KIND")]
     pub custody: Option<String>,
 

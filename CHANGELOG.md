@@ -61,6 +61,18 @@
 
 ### Added
 
+- **A composite GitHub action makes CI first class.** `uses:
+  Yazee-Me/Lockset@v0.1.0` installs that release, verifies its published
+  `.sha256` (and the GitHub artifact attestation when `gh` is available), and
+  runs `lockset run --payload <inputs.payload> -- bash -c <inputs.command>`, or
+  exports the values to `$GITHUB_ENV` with each value masked by
+  `::add-mask::`. A repository input and extra lockset arguments cover file
+  custody and non-default repositories; a bad checksum fails closed. The
+  `Action test` workflow exercises the action against a generated fixture
+  repository (real sops-encrypted payload, install, run, masked export, and the
+  fail-closed checksum), and the README documents GitLab, CircleCI, and Jenkins
+  equivalents through the container image.
+
 - **A container image, `ghcr.io/yazee-me/lockset`, carries lockset and its
   pinned sops.** Built for amd64 and arm64 in a multi-stage `Dockerfile`:
   sops 3.13.3 is fetched by version and verified against its published SHA-256

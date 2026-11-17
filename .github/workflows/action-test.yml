@@ -1,0 +1,103 @@
+name: Action test
+
+# Exercises the composite action against a generated fixture repository: the
+# install path (download, checksum, attestation opt-out), command mode, export
+# mode with masking, and the fail-closed checksum.
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - scripts/ci-install.sh
+      - scripts/export-masked.sh
+      - tests/fixtures/action/**
+      - .github/workflows/action-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOPS_VERSION: 3.13.3
+  SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+
+jobs:
+  action:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install age and the pinned sops
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y age unzip
+          curl -fsSLo /usr/local/bin/sops \
+            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          echo "${SOPS_SHA256}  /usr/local/bin/sops" | sha256sum -c -
+          chmod 0755 /usr/local/bin/sops
+          sops --version
+
+      - name: Build a fake release to install from
+        run: |
+          cargo build --release -p lockset --bin lockset
+          mkdir -p fakerel/v0.1.0 pkg/lockset-x86_64-unknown-linux-musl
+          cp target/release/lockset pkg/lockset-x86_64-unknown-linux-musl/
+          tar -cJf fakerel/v0.1.0/lockset-x86_64-unknown-linux-musl.tar.xz \
+            -C pkg lockset-x86_64-unknown-linux-musl
+          (cd fakerel/v0.1.0 \
+            && sha256sum lockset-x86_64-unknown-linux-musl.tar.xz \
+               > lockset-x86_64-unknown-linux-musl.tar.xz.sha256)
+          # A second copy whose checksum does not match, to prove the install fails closed.
+          cp -r fakerel badrel
+          printf 'deadbeef  lockset-x86_64-unknown-linux-musl.tar.xz\n' \
+            > badrel/v0.1.0/lockset-x86_64-unknown-linux-musl.tar.xz.sha256
+          (python3 -m http.server 8100 --directory fakerel >/dev/null 2>&1 &)
+          (python3 -m http.server 8101 --directory badrel >/dev/null 2>&1 &)
+          sleep 1
+
+      - name: Make the fixture repository
+        run: |
+          tests/fixtures/action/make.sh "$RUNNER_TEMP/repo"
+          echo "LOCKSET_AGE_KEY=$(cat "$RUNNER_TEMP/repo/.identity")" >> "$GITHUB_ENV"
+
+      - name: A wrong checksum fails closed
+        run: |
+          if scripts/ci-install.sh 0.1.0 http://127.0.0.1:8101 false; then
+            echo "the install accepted a bad checksum" >&2
+            exit 1
+          fi
+          echo "a bad checksum was rejected"
+
+      - name: The action runs a command with the payload
+        uses: ./
+        with:
+          version: 0.1.0
+          download-base-url: http://127.0.0.1:8100
+          verify-attestation: "false"
+          repo: ${{ runner.temp }}/repo
+          payload: secrets/dev.env
+          command: test "$TOKEN" = s3cret
+
+      - name: Assert the command saw the payload
+        run: echo "command mode passed"
+
+      - name: The action exports the payload masked
+        uses: ./
+        with:
+          version: 0.1.0
+          download-base-url: http://127.0.0.1:8100
+          verify-attestation: "false"
+          repo: ${{ runner.temp }}/repo
+          payload: secrets/dev.env
+          export-env: "true"
+
+      - name: Assert the export reached the environment
+        run: |
+          test "${TOKEN:-}" = s3cret
+          echo "TOKEN was exported into the job environment"
+
+      - name: The masking script emits GitHub workflow commands
+        run: |
+          out=$(printf 'TOKEN=s3cret\n' | scripts/export-masked.sh "$RUNNER_TEMP/env-test")
+          test "$out" = "::add-mask::s3cret"
+          grep -qx 'TOKEN=s3cret' "$RUNNER_TEMP/env-test"
+          echo "masking script ok"

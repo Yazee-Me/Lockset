@@ -374,6 +374,84 @@ covers identity presence, unreadable payloads, ciphertext, plaintext, empty
 values, label drift, admin coverage, and a decrypt proof for whatever identity
 this machine has — no particular label is required.
 
+## CI integration
+
+A GitHub workflow uses the composite action at the repository root; it installs
+a pinned, checksum-verified release and either runs a command with the payload
+or exports the values into the job environment.
+
+```yaml
+- uses: Yazee-Me/Lockset@v0.1.0   # pin the action to a release tag
+  env:
+    LOCKSET_AGE_KEY: ${{ secrets.LOCKSET_AGE_KEY }}   # env custody
+  with:
+    version: 0.1.0                 # pin the binary to the same release
+    payload: secrets/prod/deploy.env
+    command: ./deploy.sh           # runs as `lockset run --payload ... -- bash -c ...`
+
+- uses: Yazee-Me/Lockset@v0.1.0
+  env:
+    LOCKSET_AGE_KEY: ${{ secrets.LOCKSET_AGE_KEY }}
+  with:
+    version: 0.1.0
+    payload: secrets/prod/deploy.env
+    export-env: "true"             # masked values appended to $GITHUB_ENV
+```
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `version` | — | Release to install (`0.1.0`); required |
+| `payload` | — | Payload paths, comma or space separated; required |
+| `command` | `""` | Run through `lockset run`; empty only installs |
+| `export-env` | `false` | Export the values to `$GITHUB_ENV` instead of running a command |
+| `repo` | current directory | Repository to operate on |
+| `lockset-args` | `""` | Extra arguments before the payload flags, for example `--custody file:/run/secrets/age-key` |
+| `download-base-url` | the GitHub release URL | Override for mirrors and tests |
+| `verify-attestation` | `true` | Check the GitHub artifact attestation when `gh` is available |
+
+The install downloads `lockset-<target>.tar.xz` plus its published `.sha256`,
+verifies the hash (and the attestation when `gh` can reach the release), and
+fails closed on a mismatch. Exported values are masked with
+`::add-mask::<value>` before they reach `$GITHUB_ENV`, so a later step that
+echoes them is redacted; `run` never prints the values at all. The action is
+tested against a generated fixture repository by the `Action test` workflow.
+
+The same release is a container image, which is how the other CIs get both
+lockset and its pinned sops (pin the digest from the release's
+`image-digest.txt`):
+
+```yaml
+# GitLab CI
+deploy:
+  image:
+    name: ghcr.io/yazee-me/lockset@sha256:<digest>
+    entrypoint: [""]                  # the image entrypoint is lockset
+  variables:
+    LOCKSET_AGE_KEY: $LOCKSET_AGE_KEY # a masked CI variable
+  script:
+    - lockset doctor
+    - lockset run --payload secrets/prod/deploy.env -- ./deploy.sh
+```
+
+```yaml
+# CircleCI
+jobs:
+  deploy:
+    docker:
+      - image: ghcr.io/yazee-me/lockset@sha256:<digest>
+    steps:
+      - checkout
+      - run: lockset run --payload secrets/prod/deploy.env -- ./deploy.sh
+```
+
+```groovy
+// Jenkins
+withCredentials([string(credentialsId: 'lockset-age-key', variable: 'LOCKSET_AGE_KEY')]) {
+  sh 'docker run --rm -e LOCKSET_AGE_KEY -v "$PWD:/repo" -w /repo ' +
+     'ghcr.io/yazee-me/lockset@sha256:<digest> run --payload secrets/prod/deploy.env -- ./deploy.sh'
+}
+```
+
 ## Container image
 
 `ghcr.io/yazee-me/lockset` carries the CLI **and** a pinned, checksum-verified

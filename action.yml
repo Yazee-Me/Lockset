@@ -1,0 +1,100 @@
+name: Lockset
+description: >-
+  Install a pinned, checksum-verified lockset release and run a command with
+  payload secrets, or export the payload values into the job environment with
+  every value masked. The identity comes from the job environment
+  (LOCKSET_AGE_KEY, or --custody in lockset-args).
+author: Yazee-Me
+
+branding:
+  icon: lock
+  color: purple
+
+inputs:
+  version:
+    description: Lockset release version to install (for example 0.1.0).
+    required: true
+  payload:
+    description: Payload paths to load, separated by commas or spaces.
+    required: true
+  command:
+    description: >-
+      Command to run through `lockset run`. Leave empty to only install, or
+      when using export-env.
+    required: false
+    default: ""
+  export-env:
+    description: >-
+      When true, append the payload values to $GITHUB_ENV and mask each value
+      in the log instead of running a command.
+    required: false
+    default: "false"
+  repo:
+    description: Repository to operate on; empty uses the action's working directory.
+    required: false
+    default: ""
+  lockset-args:
+    description: Extra arguments for lockset before the payload flags, for example "--custody env:DEPLOY_KEY".
+    required: false
+    default: ""
+  download-base-url:
+    description: Release download base; override only for mirrors and tests.
+    required: false
+    default: https://github.com/Yazee-Me/Lockset/releases/download
+  verify-attestation:
+    description: Verify the GitHub artifact attestation when gh is available.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install lockset ${{ inputs.version }}
+      id: install
+      shell: bash
+      env:
+        LOCKSET_VERSION: ${{ inputs.version }}
+        LOCKSET_DOWNLOAD_BASE_URL: ${{ inputs.download-base-url }}
+        LOCKSET_VERIFY_ATTESTATION: ${{ inputs.verify-attestation }}
+      run: |
+        dir=$("$GITHUB_ACTION_PATH/scripts/ci-install.sh" \
+          "$LOCKSET_VERSION" "$LOCKSET_DOWNLOAD_BASE_URL" "$LOCKSET_VERIFY_ATTESTATION")
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: Export the payload values, masked
+      if: inputs.export-env == 'true'
+      shell: bash
+      env:
+        LOCKSET_PAYLOAD: ${{ inputs.payload }}
+        LOCKSET_REPO: ${{ inputs.repo }}
+        LOCKSET_ARGS: ${{ inputs.lockset-args }}
+      run: |
+        set -euo pipefail
+        repo=()
+        [ -n "$LOCKSET_REPO" ] && repo+=(--repo "$LOCKSET_REPO")
+        payload=()
+        for path in $(printf '%s' "$LOCKSET_PAYLOAD" | tr ',' ' '); do
+          payload+=(--payload "$path")
+        done
+        # shellcheck disable=SC2086
+        lockset "${repo[@]}" $LOCKSET_ARGS export "${payload[@]}" --format dotenv \
+          | "$GITHUB_ACTION_PATH/scripts/export-masked.sh" "$GITHUB_ENV"
+
+    - name: Run the command
+      if: inputs.command != ''
+      shell: bash
+      env:
+        LOCKSET_PAYLOAD: ${{ inputs.payload }}
+        LOCKSET_REPO: ${{ inputs.repo }}
+        LOCKSET_ARGS: ${{ inputs.lockset-args }}
+        LOCKSET_COMMAND: ${{ inputs.command }}
+      run: |
+        set -euo pipefail
+        repo=()
+        [ -n "$LOCKSET_REPO" ] && repo+=(--repo "$LOCKSET_REPO")
+        payload=()
+        for path in $(printf '%s' "$LOCKSET_PAYLOAD" | tr ',' ' '); do
+          payload+=(--payload "$path")
+        done
+        # shellcheck disable=SC2086
+        lockset "${repo[@]}" $LOCKSET_ARGS run "${payload[@]}" -- bash -c "$LOCKSET_COMMAND"

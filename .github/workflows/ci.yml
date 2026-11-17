@@ -39,6 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v5
+      - name: Install the lint components
+        # mise installs the rust toolchain without rustfmt/clippy; the local
+        # toolchain has them, a fresh runner does not.
+        run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."

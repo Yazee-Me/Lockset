@@ -58,6 +58,12 @@
 
 ### Fixed
 
+- Mutating commands are transactional: `exec::apply` backs up every file a plan
+  touches and restores them when a step fails, so a failed `grant`, `revoke`,
+  `rotate`, or `set` leaves the repository as it was. A restore that cannot
+  complete is a partial apply (exit 6) naming the files and the recovery step,
+  never a success. Revoking this machine's own identity without `--force` now
+  says to do it from another admin machine.
 - `--custody` fails closed: an unknown form exits 2 and lists `env`, `keyring`,
   `file:<path>`, and `keyring:<service>` instead of warning and using the
   default, and a non-interactive run with no `LOCKSET_AGE_KEY` no longer probes

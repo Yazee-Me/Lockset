@@ -85,6 +85,11 @@ mise run install     # link target/release/lockset into ~/.local/bin
   testable without credentials and reusable from another front end.
 - Plans are data (`Change` values) and `exec::apply` is the only place
   mutations happen, so `--dry-run` and tests share one path.
+- Every mutation is transactional: `exec::apply` reads the bytes of each file a
+  plan touches before writing, and restores them if any step fails, so a command
+  either lands whole or leaves the repository as it was. When a restore itself
+  fails the command reports a partial apply (exit 6) naming the files and the
+  recovery step, and never returns success.
 - Paths are `PathId` values parsed relative to the repository root, so no
   `Repo` or `Codec` call can be handed a traversal or a value sops would read
   as an option.
@@ -119,6 +124,10 @@ mise run install     # link target/release/lockset into ~/.local/bin
   keychain write asks `security(1)` to prompt for it, so `ps` cannot show it to
   a same-user process. A non-interactive run refuses to store it and points at
   `--custody env` or `--custody file:<path>`, which need no prompt.
+- A machine cannot revoke its own identity without `--force`: decommission it
+  from another admin machine instead, because a failed self-revoke used to leave
+  the repository half-updated and the machine locked out. It now either lands
+  whole or is restored.
 - Revoking a recipient rotates the data key, which bounds future exposure. It
   cannot erase ciphertext already in git history or plaintext already copied.
 

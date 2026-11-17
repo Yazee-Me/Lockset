@@ -6,6 +6,10 @@ pub enum Error {
     Refused(String),
     #[error("{0}")]
     Failed(String),
+    /// A mutation stopped part-way and could not be fully undone. Never a
+    /// success: the caller reports the files and the recovery step.
+    #[error("{0}")]
+    Partial(String),
 }
 
 impl Error {
@@ -17,6 +21,9 @@ impl Error {
     }
     pub fn failed(msg: impl Into<String>) -> Self {
         Self::Failed(msg.into())
+    }
+    pub fn partial(msg: impl Into<String>) -> Self {
+        Self::Partial(msg.into())
     }
 }
 

@@ -106,7 +106,7 @@ pub enum Command {
         /// Only drop the stanza; keep the current data key
         #[arg(long = "keep-data-key")]
         keep_data_key: bool,
-        /// Required to revoke the identity this machine is using
+        /// Deliberately decommission this machine by revoking its own identity
         #[arg(long)]
         force: bool,
     },

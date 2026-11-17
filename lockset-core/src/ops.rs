@@ -432,7 +432,8 @@ pub fn revoke(snapshot: &Snapshot, request: &RevokeRequest) -> Result<crate::pla
     if let Some(identity) = &snapshot.identity {
         if identity.public == key && !request.force {
             return Err(Error::refused(format!(
-                "{} is this machine's identity (via {}); revoking it locks this machine out (pass --force)",
+                "{} is this machine's identity (via {}); revoke it from another admin machine so \
+                 this one keeps its key, or pass --force to decommission this machine deliberately",
                 key, identity.custody
             )));
         }
@@ -709,7 +710,10 @@ mod tests {
             force: false,
         };
         let error = revoke(&snapshot(Some(A)), &request).unwrap_err();
-        assert!(error.to_string().contains("locks this machine out"));
+        assert!(
+            error.to_string().contains("from another admin machine"),
+            "{error}"
+        );
     }
 
     #[test]

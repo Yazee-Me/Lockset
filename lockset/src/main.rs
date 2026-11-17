@@ -42,6 +42,9 @@ fn json_requested(cli: &Cli) -> Result<bool> {
         Command::Run { .. } => Err(usage::error(
             "--json prints plans and reports; run has no JSON output",
         )),
+        Command::Export { .. } => Err(usage::error(
+            "--json prints plans and reports; export has its own --format",
+        )),
         _ if !cli.dry_run => Err(usage::error("--json prints a plan; pass --dry-run with it")),
         _ => Ok(true),
     }
@@ -114,6 +117,7 @@ fn run() -> Result<u8> {
         ),
         Command::Rotate { all, payload } => rotate(&context, &cli, *all, payload),
         Command::Person { command } => person(&context, &cli, command),
+        Command::Export { payload, format } => export(&context, payload, *format),
         Command::Run {
             payload,
             pass_custody,
@@ -167,6 +171,24 @@ fn check(context: &wiring::Context, cli: &Cli) -> Result<u8> {
         println!("{}", render::check(&report));
     }
     Ok(if report.failed() == 0 { 0 } else { 1 })
+}
+
+/// Values for a multi-step pipeline. Only the selected payload values reach
+/// stdout; the identity never does, and the warning goes to stderr so a pipeline
+/// can still consume stdout as data.
+fn export(context: &wiring::Context, payload: &[String], format: cli::ExportFormat) -> Result<u8> {
+    let ids: Vec<PathId> = payload
+        .iter()
+        .map(|path| payload_id(path))
+        .collect::<Result<_>>()?;
+    for id in &ids {
+        lockset_core::meta::require_dotenv(id).map_err(|error| usage::error(error.to_string()))?;
+    }
+    let key = context.require_key()?;
+    let values = exported_payload(ops::env_for(&context.codec, &ids, &key)?, false)?;
+    eprintln!("warning: the exported values are secret material; mask them in CI logs");
+    print!("{}", render::export(format, &values)?);
+    Ok(0)
 }
 
 fn run_command(

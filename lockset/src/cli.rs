@@ -48,6 +48,15 @@ pub enum Command {
     Who,
     /// Invariants that need no private key, plus decrypt verification for this machine
     Check,
+    /// Print selected payload values for a multi-step pipeline (secret material)
+    Export {
+        /// Payload to export (repeatable, merged in order, last wins)
+        #[arg(long = "payload", value_name = "PATH", required = true)]
+        payload: Vec<String>,
+        /// dotenv, json, or sh
+        #[arg(long, value_enum, default_value_t = ExportFormat::Dotenv)]
+        format: ExportFormat,
+    },
     /// Run a command with one or more payloads in its environment (identity stripped)
     Run {
         /// Payload to load (repeatable); default secrets/prod/infra.env
@@ -119,6 +128,14 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+}
+
+/// The serialization `export` writes to stdout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ExportFormat {
+    Dotenv,
+    Json,
+    Sh,
 }
 
 #[derive(Debug, Subcommand)]

@@ -11,6 +11,8 @@ secret store.
   `status`, `who`, `check`.
 - Runs a command with one or more payloads in its environment, never with the
   identity: `run`.
+- Prints selected values for a multi-step pipeline as `dotenv`, `json`, or shell
+  assignments: `export`.
 - Sets a single value and reads it back to prove it landed: `set`. On a
   terminal it prompts with the input hidden; a pipeline names its source with
   `--stdin`, `--from-env NAME`, or `--value-file PATH`, and an empty value needs
@@ -71,6 +73,7 @@ printf '%s' "$NEW_KEY" | lockset set NEW_KEY --payload secrets/dev.env --stdin
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY
 lockset set NEW_KEY --payload secrets/dev.env --value-file /run/secrets/new-key
 lockset --dry-run --json set NEW_KEY --payload secrets/dev.env   # plan as JSON, value redacted
+lockset export --payload secrets/prod/deploy.env --format dotenv
 lockset grant age1... --label dev-alice
 ```
 
@@ -96,6 +99,32 @@ lockset status --json | jq '.drift'
 lockset check  --json | jq -e 'all(.checks[]; .ok)'
 lockset --dry-run --json grant age1... --label dev-alice
 ```
+
+## Pipelines
+
+`run` is the safe default for a single command: values exist only in the child's
+environment. When several steps need them, `export` prints the selected payload
+values — and only those, never the identity — in the requested format.
+
+```sh
+# GitHub Actions: mask every value, then append it to the job environment
+lockset export --payload secrets/prod/deploy.env --format dotenv |
+  while IFS='=' read -r name value; do
+    echo "::add-mask::$value"
+    echo "$name=$value" >> "$GITHUB_ENV"
+  done
+
+# Docker/Compose: an env file next to the compose file
+lockset export --payload secrets/prod/deploy.env --format dotenv > .env.deploy
+
+# A shell step
+eval "$(lockset export --payload secrets/dev.env --format sh)"
+```
+
+Payloads merge in the order given, last value wins. The output is secret
+material: `export` warns on stderr, so mask values before a runner echoes them,
+keep the files it writes out of git, and prefer `run` whenever one command can
+consume the values.
 
 ## Exit codes
 

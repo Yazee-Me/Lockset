@@ -3,6 +3,8 @@ use lockset_core::report::{CheckReport, IdentityReport, PlanDocument, StatusRepo
 use lockset_core::{Change, Plan};
 use serde::Serialize;
 
+use crate::cli::ExportFormat;
+
 /// Serialize a `--json` document.
 pub fn json<T: Serialize>(document: &T) -> Result<String> {
     serde_json::to_string_pretty(document).context("cannot encode the document as JSON")
@@ -184,6 +186,31 @@ pub fn plan(plan: &Plan, dry_run: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// The requested serialization of the merged payload values. The values are
+/// secret material: they appear here by design, escaped so the format stays
+/// valid, and nowhere else.
+pub fn export(format: ExportFormat, values: &[(String, String)]) -> Result<String> {
+    Ok(match format {
+        ExportFormat::Dotenv => values
+            .iter()
+            .map(|(name, value)| format!("{name}={value}\n"))
+            .collect(),
+        ExportFormat::Json => {
+            let map: std::collections::BTreeMap<&str, &str> = values
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect();
+            let text =
+                serde_json::to_string_pretty(&map).context("cannot encode the values as JSON")?;
+            format!("{text}\n")
+        }
+        ExportFormat::Sh => values
+            .iter()
+            .map(|(name, value)| format!("export {name}='{}'\n", value.replace('\'', "'\\''")))
+            .collect(),
+    })
+}
+
 pub fn describe(item: &Change) -> String {
     match item {
         Change::WriteFile { path, .. } => format!("write {path}"),
@@ -196,5 +223,42 @@ pub fn describe(item: &Change) -> String {
         } => format!("set {name} in {payload}"),
         Change::StoreKey { custody } => format!("store the key in {custody}"),
         Change::ForgetKey { custody } => format!("remove the key from {custody}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn values() -> Vec<(String, String)> {
+        vec![
+            ("TOKEN".to_owned(), "abc".to_owned()),
+            ("QUOTE".to_owned(), "it's".to_owned()),
+        ]
+    }
+
+    #[test]
+    fn dotenv_writes_name_value_lines() {
+        assert_eq!(
+            export(ExportFormat::Dotenv, &values()).unwrap(),
+            "TOKEN=abc\nQUOTE=it's\n"
+        );
+    }
+
+    #[test]
+    fn json_writes_one_object() {
+        let text = export(ExportFormat::Json, &values()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(parsed["TOKEN"], "abc");
+        assert_eq!(parsed["QUOTE"], "it's");
+    }
+
+    #[test]
+    fn sh_escapes_single_quotes() {
+        assert_eq!(
+            export(ExportFormat::Sh, &values()).unwrap(),
+            concat!("export TOKEN='abc'\n", "export QUOTE='it'\\''s'\n")
+        );
     }
 }

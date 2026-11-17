@@ -58,6 +58,11 @@
 
 ### Added
 
+- `lockset export --payload PATH --format dotenv|json|sh` prints selected
+  payload values for multi-step pipelines, merging payloads in order (last
+  wins), refusing identity and sops names, and warning on stderr that the
+  output is secret material. The README shows GitHub `::add-mask::` usage and
+  recommends `run` for single-command jobs.
 - `status`, `who`, and `check` accept `--json`, and plan documents carry
   `"schema_version": 1`. Each report is a stable serde structure (`StatusReport`,
   `IdentityReport`, `CheckReport`, `PlanDocument`) with counts and public keys

@@ -10,7 +10,7 @@ secret store.
 - Reports who may read what, and drift between the map and the payloads:
   `status`, `who`, `check`.
 - Runs a command with one or more payloads in its environment, never with the
-  identity: `run`.
+  identity, and hands over the command's exit code and signals: `run`.
 - Prints selected values for a multi-step pipeline as `dotenv`, `json`, or shell
   assignments: `export`.
 - Sets a single value and reads it back to prove it landed: `set`. On a
@@ -70,6 +70,8 @@ lockset status                       # identity, payloads, coverage, drift, empt
 lockset who                          # label -> public key, payload count, local key
 lockset run --payload secrets/dev.env -- ./my-command
 lockset run --pass-custody -- ./tool  # deliberate exception: the child gets the identity environment
+lockset run --clean-env -- ./my-command  # only PATH, HOME, TMPDIR, LANG plus the payloads
+lockset run --payload secrets/a.env --payload secrets/b.env --last-wins -- ./my-command
 lockset set NEW_KEY --payload secrets/dev.env      # hidden prompt
 printf '%s' "$NEW_KEY" | lockset set NEW_KEY --payload secrets/dev.env --stdin
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY
@@ -123,10 +125,13 @@ lockset export --payload secrets/prod/deploy.env --format dotenv > .env.deploy
 eval "$(lockset export --payload secrets/dev.env --format sh)"
 ```
 
-Payloads merge in the order given, last value wins. The output is secret
-material: `export` warns on stderr, so mask values before a runner echoes them,
-keep the files it writes out of git, and prefer `run` whenever one command can
-consume the values.
+Payloads merge in the order given. A key defined by more than one payload is an
+error (exit 2) that names the key and both payloads, because a pipeline cannot
+tell which value it received: pass `--last-wins` or `--first-wins` to choose. A
+payload that defines the same key twice is an error under either flag. The
+output is secret material: `export` warns on stderr, so mask values before a
+runner echoes them, keep the files it writes out of git, and prefer `run`
+whenever one command can consume the values.
 
 ## Doctor
 
@@ -182,6 +187,11 @@ this machine has — no particular label is required.
   (default 10) and then exits 5 with a conflict instead of racing.
 - A plan records the digest of every file it touches. If one changed after the
   snapshot — an editor, another tool — the apply writes nothing and exits 5.
+- `run` hands the child its own fate: on Unix the CLI `exec`s the command, so
+  the exit code and any terminating signal are the command's own; elsewhere the
+  wait status is propagated, with a signal mapped to `128 + signal`. The child
+  starts from the parent's environment minus the identity, unless
+  `--clean-env` narrows it to `PATH`, `HOME`, `TMPDIR`, and `LANG`.
 - `--dry-run` builds the plan before custody is consulted, so every mutating
   command renders its plan with no identity at all and a pipeline can diff a
   change without secrets. The key is required only to apply, and an invalid

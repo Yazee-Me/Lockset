@@ -56,12 +56,18 @@ pub enum Command {
     Doctor,
     /// Print selected payload values for a multi-step pipeline (secret material)
     Export {
-        /// Payload to export (repeatable, merged in order, last wins)
+        /// Payload to export (repeatable, merged in order)
         #[arg(long = "payload", value_name = "PATH", required = true)]
         payload: Vec<String>,
         /// dotenv, json, or sh
         #[arg(long, value_enum, default_value_t = ExportFormat::Dotenv)]
         format: ExportFormat,
+        /// Keep the later value when two payloads define the same key
+        #[arg(long = "last-wins", conflicts_with = "first_wins")]
+        last_wins: bool,
+        /// Keep the earlier value when two payloads define the same key
+        #[arg(long = "first-wins")]
+        first_wins: bool,
     },
     /// Run a command with one or more payloads in its environment (identity stripped)
     Run {
@@ -69,8 +75,17 @@ pub enum Command {
         #[arg(long = "payload", value_name = "PATH")]
         payload: Vec<String>,
         /// Hand the child the identity environment; prefer passing an identity file
-        #[arg(long = "pass-custody")]
+        #[arg(long = "pass-custody", conflicts_with = "clean_env")]
         pass_custody: bool,
+        /// Give the child only PATH, HOME, TMPDIR, LANG plus the payload values
+        #[arg(long = "clean-env")]
+        clean_env: bool,
+        /// Keep the later value when two payloads define the same key
+        #[arg(long = "last-wins", conflicts_with = "first_wins")]
+        last_wins: bool,
+        /// Keep the earlier value when two payloads define the same key
+        #[arg(long = "first-wins")]
+        first_wins: bool,
         #[arg(last = true, required = true, value_name = "COMMAND")]
         argv: Vec<String>,
     },

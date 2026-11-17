@@ -385,26 +385,55 @@ pub fn revoke(snapshot: &Snapshot, request: &RevokeRequest) -> Result<crate::pla
 }
 
 /// Values for a child process, in memory only.
+/// How `env_for` resolves a key that more than one payload defines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuplicateKeys {
+    /// Refuse, naming the key and the payloads (the default).
+    Error,
+    /// Keep the value from the last payload that defines it.
+    LastWins,
+    /// Keep the value from the first payload that defines it.
+    FirstWins,
+}
+
+/// Values for a child process, in memory only. A key defined twice is an error
+/// unless the caller asked for a side, so a pipeline never silently picks one.
 pub fn env_for(
     codec: &dyn Codec,
     ids: &[PathId],
     key: &crate::model::SecretKey,
+    duplicates: DuplicateKeys,
 ) -> Result<Vec<(String, String)>> {
-    let mut out: Vec<(String, String)> = Vec::new();
+    let mut out: Vec<(String, String, PathId)> = Vec::new();
     for id in ids {
         crate::meta::require_dotenv(id)?;
         let plain = codec.decrypt(id, key)?;
         let text = String::from_utf8(plain)
             .map_err(|_| Error::failed(format!("{id} does not decrypt to UTF-8")))?;
         for (name, value) in crate::dotenv::parse(&text) {
-            if let Some(existing) = out.iter_mut().find(|(n, _)| n == &name) {
-                existing.1 = value;
-            } else {
-                out.push((name, value));
+            match out.iter_mut().find(|(n, _, _)| n == &name) {
+                Some((_, existing, first)) => match duplicates {
+                    DuplicateKeys::Error => {
+                        let where_ = if first == id {
+                            format!("{name} is defined twice in {id}")
+                        } else {
+                            format!("duplicate key {name} in {first} and {id}")
+                        };
+                        return Err(Error::invalid(format!(
+                            "{where_}; pass --last-wins or --first-wins to choose"
+                        )));
+                    }
+                    DuplicateKeys::LastWins => *existing = value,
+                    DuplicateKeys::FirstWins => {}
+                },
+                None => out.push((name, value, id.clone())),
             }
         }
     }
-    Ok(out)
+    Ok(out
+        .into_iter()
+        .map(|(name, value, _)| (name, value))
+        .collect())
 }
 
 #[cfg(test)]
@@ -535,10 +564,117 @@ mod tests {
         let key = crate::model::SecretKey::generate();
         let codec = FakeCodec("A=1\nB=2\n");
 
-        let envs = env_for(&codec, &[PathId::parse("secrets/a.env").unwrap()], &key).unwrap();
+        let envs = env_for(
+            &codec,
+            &[PathId::parse("secrets/a.env").unwrap()],
+            &key,
+            DuplicateKeys::Error,
+        )
+        .unwrap();
 
         assert_eq!(envs.len(), 2);
         assert!(envs.contains(&("A".to_owned(), "1".to_owned())), "{envs:?}");
+    }
+
+    /// A codec with one canned decryption per path.
+    struct Files(&'static [(&'static str, &'static str)]);
+
+    impl Codec for Files {
+        fn decrypt(&self, id: &PathId, _key: &crate::model::SecretKey) -> Result<Vec<u8>> {
+            self.0
+                .iter()
+                .find(|(path, _)| *path == id.as_str())
+                .map(|(_, text)| text.as_bytes().to_vec())
+                .ok_or_else(|| Error::failed(format!("no such payload: {id}")))
+        }
+        fn rewrap(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
+        fn rekey(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
+        fn set_value(
+            &self,
+            _id: &PathId,
+            _name: &str,
+            _value: &str,
+            _key: &crate::model::SecretKey,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn two_payloads() -> Vec<PathId> {
+        vec![
+            PathId::parse("secrets/a.env").unwrap(),
+            PathId::parse("secrets/b.env").unwrap(),
+        ]
+    }
+
+    #[test]
+    fn env_for_refuses_a_duplicate_key_by_default() {
+        let key = crate::model::SecretKey::generate();
+        let codec = Files(&[
+            ("secrets/a.env", "TOKEN=a\n"),
+            ("secrets/b.env", "TOKEN=b\n"),
+        ]);
+
+        let error = env_for(&codec, &two_payloads(), &key, DuplicateKeys::Error).unwrap_err();
+        let message = error.to_string();
+
+        assert!(
+            message.contains("duplicate key TOKEN in secrets/a.env and secrets/b.env"),
+            "{message}"
+        );
+        assert!(message.contains("--last-wins"), "{message}");
+        assert!(
+            !message.contains("TOKEN=a") && !message.contains("TOKEN=b"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn env_for_resolves_duplicates_only_when_asked() {
+        let key = crate::model::SecretKey::generate();
+        let codec = Files(&[
+            ("secrets/a.env", "TOKEN=a\nONLY_A=1\n"),
+            ("secrets/b.env", "TOKEN=b\nONLY_B=2\n"),
+        ]);
+
+        let last = env_for(&codec, &two_payloads(), &key, DuplicateKeys::LastWins).unwrap();
+        assert!(
+            last.contains(&("TOKEN".to_owned(), "b".to_owned())),
+            "{last:?}"
+        );
+        assert_eq!(last.len(), 3);
+
+        let first = env_for(&codec, &two_payloads(), &key, DuplicateKeys::FirstWins).unwrap();
+        assert!(
+            first.contains(&("TOKEN".to_owned(), "a".to_owned())),
+            "{first:?}"
+        );
+        assert_eq!(first.len(), 3);
+    }
+
+    #[test]
+    fn env_for_flags_a_key_defined_twice_in_one_payload() {
+        let key = crate::model::SecretKey::generate();
+        let codec = Files(&[("secrets/a.env", "TOKEN=a\nTOKEN=b\n")]);
+
+        let error = env_for(
+            &codec,
+            &[PathId::parse("secrets/a.env").unwrap()],
+            &key,
+            DuplicateKeys::Error,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("TOKEN is defined twice in secrets/a.env"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -546,7 +682,13 @@ mod tests {
         let key = crate::model::SecretKey::generate();
         let codec = FakeCodec("A: 1\n");
 
-        let error = env_for(&codec, &[PathId::parse("secrets/a.yaml").unwrap()], &key).unwrap_err();
+        let error = env_for(
+            &codec,
+            &[PathId::parse("secrets/a.yaml").unwrap()],
+            &key,
+            DuplicateKeys::Error,
+        )
+        .unwrap_err();
 
         assert!(error.to_string().contains("dotenv"), "{error}");
         assert!(error.to_string().contains("a.yaml"), "{error}");

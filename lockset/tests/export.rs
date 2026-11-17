@@ -58,6 +58,7 @@ fn dotenv_exports_the_merged_values_and_nothing_else() {
 
     let output = harness.run(&[
         "export",
+        "--last-wins",
         "--payload",
         "secrets/a.env",
         "--payload",
@@ -77,6 +78,7 @@ fn json_exports_one_object() {
 
     let output = harness.run(&[
         "export",
+        "--last-wins",
         "--payload",
         "secrets/a.env",
         "--payload",
@@ -116,6 +118,7 @@ fn payloads_merge_in_order_and_the_last_value_wins() {
 
     let output = harness.run(&[
         "export",
+        "--last-wins",
         "--payload",
         "secrets/b.env",
         "--payload",

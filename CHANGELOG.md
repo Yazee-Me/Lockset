@@ -24,6 +24,18 @@
   An empty value is refused unless `--allow-empty` is passed, and the three
   sources are mutually exclusive.
 
+### Added
+
+- `lockset run --clean-env` gives the command only `PATH`, `HOME`, `TMPDIR`, and
+  `LANG` from the parent plus the payload values, for jobs that would otherwise
+  inherit an unrelated CI secret.
+
+### Changed
+
+- `lockset run` hands the child its own exit status: on Unix the CLI `exec`s the
+  command, so its exit code and terminating signals pass through untouched;
+  elsewhere the wait status is propagated, mapping a signal to `128 + signal`.
+
 ### Security
 
 - `lockset run` no longer hands the identity to the command it starts: the

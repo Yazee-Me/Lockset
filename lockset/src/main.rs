@@ -12,8 +12,8 @@ use anyhow::Result;
 use clap::Parser;
 use lockset_core::ops::{self, GrantRequest, RevokeRequest, RevokeTarget};
 use lockset_core::{
-    exec, Change, Check, CheckReport, Codec, IdentityReport, Label, PathId, Plan, PubKey,
-    SecretValue, StatusReport,
+    exec, Change, Check, CheckReport, Codec, DuplicateKeys, IdentityReport, Label, PathId, Plan,
+    PubKey, SecretValue, StatusReport,
 };
 
 use crate::cli::{Cli, Command, KeyCommand, PersonCommand};
@@ -118,12 +118,31 @@ fn run() -> Result<u8> {
         ),
         Command::Rotate { all, payload } => rotate(&context, &cli, *all, payload),
         Command::Person { command } => person(&context, &cli, command),
-        Command::Export { payload, format } => export(&context, payload, *format),
+        Command::Export {
+            payload,
+            format,
+            last_wins,
+            first_wins,
+        } => export(
+            &context,
+            payload,
+            *format,
+            duplicate_policy(*last_wins, *first_wins),
+        ),
         Command::Run {
             payload,
             pass_custody,
+            clean_env,
+            last_wins,
+            first_wins,
             argv,
-        } => run_command(&context, payload, argv, *pass_custody),
+        } => run_command(
+            &context,
+            payload,
+            argv,
+            child_env(*pass_custody, *clean_env),
+            duplicate_policy(*last_wins, *first_wins),
+        ),
         Command::Key { command } => key(&context, &cli, command),
         Command::Grant {
             public,
@@ -361,7 +380,12 @@ fn check(context: &wiring::Context, cli: &Cli) -> Result<u8> {
 /// Values for a multi-step pipeline. Only the selected payload values reach
 /// stdout; the identity never does, and the warning goes to stderr so a pipeline
 /// can still consume stdout as data.
-fn export(context: &wiring::Context, payload: &[String], format: cli::ExportFormat) -> Result<u8> {
+fn export(
+    context: &wiring::Context,
+    payload: &[String],
+    format: cli::ExportFormat,
+    duplicates: DuplicateKeys,
+) -> Result<u8> {
     let ids: Vec<PathId> = payload
         .iter()
         .map(|path| payload_id(path))
@@ -370,7 +394,7 @@ fn export(context: &wiring::Context, payload: &[String], format: cli::ExportForm
         lockset_core::meta::require_dotenv(id).map_err(|error| usage::error(error.to_string()))?;
     }
     let key = context.require_key()?;
-    let values = exported_payload(ops::env_for(&context.codec, &ids, &key)?, false)?;
+    let values = exported_payload(ops::env_for(&context.codec, &ids, &key, duplicates)?, false)?;
     eprintln!("warning: the exported values are secret material; mask them in CI logs");
     print!("{}", render::export(format, &values)?);
     Ok(0)
@@ -380,7 +404,8 @@ fn run_command(
     context: &wiring::Context,
     payload: &[String],
     argv: &[String],
-    pass_custody: bool,
+    mode: ChildEnv,
+    duplicates: DuplicateKeys,
 ) -> Result<u8> {
     let ids: Vec<PathId> = if payload.is_empty() {
         vec![payload_id("secrets/prod/infra.env")?]
@@ -394,13 +419,80 @@ fn run_command(
         lockset_core::meta::require_dotenv(id).map_err(|error| usage::error(error.to_string()))?;
     }
     let key = context.require_key()?;
-    let envs = exported_payload(ops::env_for(&context.codec, &ids, &key)?, pass_custody)?;
+    let inherited = mode == ChildEnv::Inherited;
+    let envs = exported_payload(
+        ops::env_for(&context.codec, &ids, &key, duplicates)?,
+        inherited,
+    )?;
 
     let (program, rest) = argv
         .split_first()
         .ok_or_else(|| usage::error("run needs a command after --"))?;
-    let status = child_command(program, rest, envs, pass_custody, std::env::vars_os()).status()?;
-    Ok(status.code().unwrap_or(1) as u8)
+    let mut command = child_command(program, rest, envs, mode, std::env::vars_os());
+
+    // On Unix the child *is* this process after `exec`, so its exit code and
+    // signals pass through untouched. Elsewhere the status is propagated.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let error = command.exec();
+        Err(usage::error(format!("cannot run {program}: {error}")))
+    }
+    #[cfg(not(unix))]
+    {
+        let status = command
+            .status()
+            .map_err(|error| usage::error(format!("cannot run {program}: {error}")))?;
+        Ok(exit_status_code(status))
+    }
+}
+
+/// How the child's environment starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChildEnv {
+    /// The parent's, minus the identity and every `SOPS_*` variable.
+    Scrubbed,
+    /// Only `PATH`, `HOME`, `TMPDIR`, and `LANG` from the parent.
+    Clean,
+    /// The parent's, identity included (`--pass-custody`).
+    Inherited,
+}
+
+fn child_env(pass_custody: bool, clean_env: bool) -> ChildEnv {
+    if clean_env {
+        ChildEnv::Clean
+    } else if pass_custody {
+        ChildEnv::Inherited
+    } else {
+        ChildEnv::Scrubbed
+    }
+}
+
+fn duplicate_policy(last_wins: bool, first_wins: bool) -> DuplicateKeys {
+    if last_wins {
+        DuplicateKeys::LastWins
+    } else if first_wins {
+        DuplicateKeys::FirstWins
+    } else {
+        DuplicateKeys::Error
+    }
+}
+
+/// The child's own code; a process killed by a signal becomes `128 + signal`
+/// where the platform reports one. (Unix uses `exec`, so this is the wait path.)
+#[cfg(any(not(unix), test))]
+fn exit_status_code(status: std::process::ExitStatus) -> u8 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128u8.saturating_add(u8::try_from(signal).unwrap_or(1));
+        }
+    }
+    match status.code() {
+        Some(code) => code as u8,
+        None => 1,
+    }
 }
 
 /// The payload values `run` hands over. A payload may not smuggle the identity
@@ -433,15 +525,23 @@ fn child_command(
     program: &str,
     rest: &[String],
     payload_env: Vec<(String, String)>,
-    pass_custody: bool,
+    mode: ChildEnv,
     parent_env: impl IntoIterator<Item = (OsString, OsString)>,
 ) -> std::process::Command {
     let mut command = std::process::Command::new(program);
     command.args(rest);
-    if !pass_custody {
-        command
-            .env_clear()
-            .envs(lockset_tools::env::without_identity(parent_env));
+    match mode {
+        ChildEnv::Inherited => {}
+        ChildEnv::Scrubbed => {
+            command
+                .env_clear()
+                .envs(lockset_tools::env::without_identity(parent_env));
+        }
+        ChildEnv::Clean => {
+            command
+                .env_clear()
+                .envs(lockset_tools::env::clean(parent_env));
+        }
     }
     command.envs(payload_env);
     command
@@ -813,12 +913,17 @@ mod tests {
 
     use super::*;
 
-    /// A parent environment holding the identity and a sops override.
+    /// A parent environment holding the identity, a sops override, and an
+    /// unrelated CI secret.
     fn parent() -> Vec<(OsString, OsString)> {
         vec![
             ("PATH".into(), "/usr/bin".into()),
+            ("HOME".into(), "/home/dev".into()),
+            ("TMPDIR".into(), "/tmp".into()),
+            ("LANG".into(), "C.UTF-8".into()),
             ("LOCKSET_AGE_KEY".into(), "AGE-SECRET-KEY-1PARENT".into()),
             ("SOPS_AGE_KEY_FILE".into(), "/tmp/key.txt".into()),
+            ("CI_JOB_TOKEN".into(), "unrelated-secret".into()),
         ]
     }
 
@@ -840,7 +945,7 @@ mod tests {
             "build",
             &["--release".to_owned()],
             vec![("TOKEN".to_owned(), "from-payload".to_owned())],
-            false,
+            ChildEnv::Scrubbed,
             parent(),
         );
         let envs = envs(&command);
@@ -849,6 +954,31 @@ mod tests {
         assert_eq!(envs.get("PATH").map(String::as_str), Some("/usr/bin"));
         assert!(!envs.contains_key("LOCKSET_AGE_KEY"));
         assert!(!envs.contains_key("SOPS_AGE_KEY_FILE"));
+        // Everything else is still the parent's, as scrubbing promises.
+        assert_eq!(
+            envs.get("CI_JOB_TOKEN").map(String::as_str),
+            Some("unrelated-secret")
+        );
+    }
+
+    #[test]
+    fn clean_env_keeps_only_the_allowlist_and_the_payload() {
+        let command = child_command(
+            "build",
+            &[],
+            vec![("TOKEN".to_owned(), "from-payload".to_owned())],
+            ChildEnv::Clean,
+            parent(),
+        );
+        let envs = envs(&command);
+
+        assert_eq!(envs.get("TOKEN").map(String::as_str), Some("from-payload"));
+        for name in ["PATH", "HOME", "TMPDIR", "LANG"] {
+            assert!(envs.contains_key(name), "{name} must survive --clean-env");
+        }
+        assert!(!envs.contains_key("CI_JOB_TOKEN"), "{envs:?}");
+        assert!(!envs.contains_key("LOCKSET_AGE_KEY"), "{envs:?}");
+        assert!(!envs.contains_key("SOPS_AGE_KEY_FILE"), "{envs:?}");
     }
 
     #[test]
@@ -860,11 +990,35 @@ mod tests {
         assert!(exported_payload(envs, true).is_ok());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_signal_status_becomes_128_plus_the_signal() {
+        use std::os::unix::process::ExitStatusExt;
+
+        assert_eq!(
+            exit_status_code(std::process::ExitStatus::from_raw(15)),
+            143
+        );
+        assert_eq!(exit_status_code(std::process::ExitStatus::from_raw(9)), 137);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_normal_exit_status_keeps_its_code() {
+        use std::os::unix::process::ExitStatusExt;
+
+        assert_eq!(exit_status_code(std::process::ExitStatus::from_raw(0)), 0);
+        assert_eq!(
+            exit_status_code(std::process::ExitStatus::from_raw(7 << 8)),
+            7
+        );
+    }
+
     #[test]
     fn pass_custody_leaves_the_environment_inherited() {
         // Nothing is set or removed: the child inherits the parent environment,
         // identity included, which is exactly what the flag asks for.
-        let command = child_command("build", &[], Vec::new(), true, parent());
+        let command = child_command("build", &[], Vec::new(), ChildEnv::Inherited, parent());
 
         assert_eq!(command.get_envs().count(), 0);
     }

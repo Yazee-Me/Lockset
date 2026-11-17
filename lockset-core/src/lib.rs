@@ -20,6 +20,7 @@ pub mod sopsfile;
 pub use digest::digest;
 pub use error::{Error, Result};
 pub use model::{CustodyKind, Label, PathId, PubKey, SecretKey};
+pub use ops::DuplicateKeys;
 pub use plan::{Change, Plan, SecretValue};
 pub use ports::{Codec, Custody, Repo};
 pub use report::{Check, CheckReport, IdentityReport, PlanDocument, StatusReport, SCHEMA_VERSION};

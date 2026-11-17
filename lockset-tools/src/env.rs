@@ -16,6 +16,22 @@ const IDENTITY_VARS: &[&str] = &["LOCKSET_AGE_KEY"];
 /// `SOPS_AGE_KEY_FILE`, `SOPS_AGE_KEY_CMD`, and the rest of sops's options.
 const SOPS_PREFIX: &str = "SOPS_";
 
+/// What `run --clean-env` keeps: enough to start a program, and nothing that
+/// could carry an unrelated CI secret.
+const CLEAN_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG"];
+
+/// Whether `--clean-env` keeps this variable.
+pub fn is_kept(name: &str) -> bool {
+    CLEAN_ENV.contains(&name)
+}
+
+/// The parent environment reduced to the `--clean-env` allowlist.
+pub fn clean(env: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<(OsString, OsString)> {
+    env.into_iter()
+        .filter(|(name, _)| is_kept(&name.to_string_lossy()))
+        .collect()
+}
+
 /// Whether a child must not inherit this variable.
 pub fn is_reserved(name: &str) -> bool {
     IDENTITY_VARS.contains(&name) || name.starts_with(SOPS_PREFIX)
@@ -67,6 +83,29 @@ mod tests {
         ]));
 
         assert_eq!(names(&scrubbed), vec!["PATH".to_owned()]);
+    }
+
+    #[test]
+    fn clean_keeps_only_the_allowlist() {
+        let kept = clean(env(&[
+            ("PATH", "/usr/bin"),
+            ("HOME", "/home/dev"),
+            ("TMPDIR", "/tmp"),
+            ("LANG", "C.UTF-8"),
+            ("CI_JOB_TOKEN", "secret"),
+            ("LOCKSET_AGE_KEY", "AGE-SECRET-KEY-1EXAMPLE"),
+            ("SOME_APP_KEY", "value"),
+        ]));
+
+        assert_eq!(
+            names(&kept),
+            vec![
+                "HOME".to_owned(),
+                "LANG".to_owned(),
+                "PATH".to_owned(),
+                "TMPDIR".to_owned(),
+            ]
+        );
     }
 
     #[test]

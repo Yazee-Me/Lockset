@@ -34,11 +34,14 @@ pub enum Command {
     Who,
     /// Invariants that need no private key, plus decrypt-verification as admin
     Check,
-    /// Run a command with one or more payloads in its environment
+    /// Run a command with one or more payloads in its environment (identity stripped)
     Run {
         /// Payload to load (repeatable); default secrets/prod/infra.env
         #[arg(long = "payload", value_name = "PATH")]
         payload: Vec<String>,
+        /// Hand the child the identity environment; prefer passing an identity file
+        #[arg(long = "pass-custody")]
+        pass_custody: bool,
         #[arg(last = true, required = true, value_name = "COMMAND")]
         argv: Vec<String>,
     },

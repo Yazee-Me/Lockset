@@ -9,7 +9,8 @@ secret store.
 
 - Reports who may read what, and drift between the map and the payloads:
   `status`, `who`, `check`.
-- Runs a command with one or more payloads in its environment: `run`.
+- Runs a command with one or more payloads in its environment, never with the
+  identity: `run`.
 - Sets a single value and reads it back to prove it landed: `set`.
 - Rotates data keys without touching values: `rotate`.
 - Grants and revokes recipients, rewriting only the `age:` line of
@@ -45,6 +46,7 @@ cargo install --path lockset --locked
 lockset status                       # identity, payloads, coverage, drift, empty values
 lockset who                          # label -> public key, payload count, local key
 lockset run --payload secrets/dev.env -- ./my-command
+lockset run --pass-custody -- ./tool  # deliberate exception: the child gets the identity environment
 lockset set NEW_KEY --payload secrets/dev.env
 lockset grant age1... --label dev-alice
 ```
@@ -74,8 +76,16 @@ mise run install     # link target/release/lockset into ~/.local/bin
 - Values are never written to a file: `run` passes them through the child
   environment, which same-user processes can read. Treat a machine that runs
   this as trusted.
-- The private key reaches sops through the child environment
-  (`SOPS_AGE_KEY`), never through argv.
+- `run` gives the command an explicit environment: the parent's, minus
+  `LOCKSET_AGE_KEY` and every `SOPS_*` variable, plus the payload values. The
+  identity opens every payload, so a build script must not inherit it.
+  A payload that itself defines an identity or `SOPS_*` name is refused rather
+  than exported. `--pass-custody` inherits the parent environment unchanged and
+  is the deliberate exception; if a command has to decrypt for itself, hand it
+  the path of an identity file explicitly instead.
+- The private key reaches sops as `SOPS_AGE_KEY`, and the sops child starts
+  without the parent's identity or any other `SOPS_*` variable, so no inherited
+  override can redirect it. The key never reaches argv or a file.
 - Revoking a recipient rotates the data key, which bounds future exposure. It
   cannot erase ciphertext already in git history or plaintext already copied.
 

@@ -1,7 +1,10 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use lockset_core::{Codec, Error, PathId, Result, SecretKey};
+
+use crate::env;
 
 /// The sops CLI, wrapped. The key is handed over through the child
 /// environment only; it never reaches argv or a file.
@@ -18,12 +21,28 @@ impl SopsCodec {
         }
     }
 
-    fn run(&self, args: &[&str], key: &SecretKey) -> Result<Output> {
-        Command::new(&self.bin)
+    /// The sops child. Its environment is its own rather than inherited: the
+    /// parent's identity and every `SOPS_*` variable are dropped, so
+    /// `SOPS_AGE_KEY` is the only key source and no inherited override can
+    /// point sops at another one.
+    fn command(
+        &self,
+        args: &[&str],
+        key: &SecretKey,
+        parent_env: impl IntoIterator<Item = (OsString, OsString)>,
+    ) -> Command {
+        let mut command = Command::new(&self.bin);
+        command
             .args(args)
             .current_dir(&self.root)
-            .env("SOPS_AGE_KEY", key.expose())
-            .env_remove("SOPS_AGE_KEY_FILE")
+            .env_clear()
+            .envs(env::without_identity(parent_env))
+            .env("SOPS_AGE_KEY", key.expose());
+        command
+    }
+
+    fn run(&self, args: &[&str], key: &SecretKey) -> Result<Output> {
+        self.command(args, key, std::env::vars_os())
             .output()
             .map_err(|e| Error::failed(format!("cannot run {}: {e}", self.bin)))
     }
@@ -73,11 +92,12 @@ impl Codec for SopsCodec {
             .map_err(|e| Error::failed(format!("cannot encode the value: {e}")))?;
         let selector = format!("[\"{name}\"]");
 
-        let mut child = Command::new(&self.bin)
-            .args(["set", "--value-stdin", id.as_str(), &selector])
-            .current_dir(&self.root)
-            .env("SOPS_AGE_KEY", key.expose())
-            .env_remove("SOPS_AGE_KEY_FILE")
+        let mut child = self
+            .command(
+                &["set", "--value-stdin", id.as_str(), &selector],
+                key,
+                std::env::vars_os(),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -108,5 +128,73 @@ impl Codec for SopsCodec {
             )));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+    use std::process::Command;
+
+    use super::*;
+
+    /// A parent environment that looks like a machine holding the identity
+    /// plus every override sops might honour.
+    fn parent() -> Vec<(OsString, OsString)> {
+        vec![
+            ("PATH".into(), "/usr/bin".into()),
+            ("HOME".into(), "/home/dev".into()),
+            ("LOCKSET_AGE_KEY".into(), "AGE-SECRET-KEY-1PARENT".into()),
+            ("SOPS_AGE_KEY".into(), "AGE-SECRET-KEY-1PARENT".into()),
+            ("SOPS_AGE_KEY_FILE".into(), "/tmp/key.txt".into()),
+            ("SOPS_AGE_KEY_CMD".into(), "op read op://vault/key".into()),
+            ("SOPS_AGE_RECIPIENTS".into(), "age1example".into()),
+        ]
+    }
+
+    fn command(codec: &SopsCodec, key: &SecretKey) -> Command {
+        codec.command(&["-d", "secrets/dev.env"], key, parent())
+    }
+
+    fn child_env(command: &Command) -> BTreeMap<String, String> {
+        command
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.unwrap_or_default().to_string_lossy().into_owned(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_sops_child_holds_only_its_own_key() {
+        let codec = SopsCodec::new("/repo");
+        let key = SecretKey::generate();
+        let env = child_env(&command(&codec, &key));
+
+        assert_eq!(
+            env.get("SOPS_AGE_KEY").map(String::as_str),
+            Some(key.expose())
+        );
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
+        assert!(!env.contains_key("LOCKSET_AGE_KEY"));
+        assert!(!env.contains_key("SOPS_AGE_KEY_FILE"));
+        assert!(!env.contains_key("SOPS_AGE_KEY_CMD"));
+        assert!(!env.contains_key("SOPS_AGE_RECIPIENTS"));
+    }
+
+    #[test]
+    fn the_key_never_reaches_argv() {
+        let codec = SopsCodec::new("/repo");
+        let key = SecretKey::generate();
+        let argv: Vec<String> = command(&codec, &key)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(argv.iter().all(|arg| !arg.contains(key.expose())));
     }
 }

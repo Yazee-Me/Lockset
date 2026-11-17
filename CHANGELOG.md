@@ -16,3 +16,14 @@
   `lockset key import` once — pasting the same age identity — so the current
   item holds it. `--custody file:<path>` needs no change beyond the variable
   name.
+
+### Security
+
+- `lockset run` no longer hands the identity to the command it starts: the
+  child's environment is the parent's minus `LOCKSET_AGE_KEY` and every
+  `SOPS_*` variable, with the payload values added on top; a payload that
+  defines one of those names is refused. Scripts that relied on the child
+  reading the identity must ask for `--pass-custody`, or be given the path of
+  an identity file. `sops` also starts from the scrubbed environment, with
+  `SOPS_AGE_KEY` as its only key source, so an inherited `SOPS_AGE_KEY_FILE` or
+  `SOPS_AGE_KEY_CMD` can no longer redirect it.

@@ -35,6 +35,14 @@ impl Repo for FsRepo {
         Ok(out)
     }
 
+    fn walk(&self) -> Result<Vec<PathId>> {
+        let mut out = Vec::new();
+        let mut seen = BTreeSet::new();
+        collect(&self.root, &self.root, &mut seen, &mut out)?;
+        out.sort();
+        Ok(out)
+    }
+
     fn read(&self, id: &PathId) -> Result<Vec<u8>> {
         let path = self.resolve(id);
         std::fs::read(&path).map_err(|e| Error::failed(format!("cannot read {id}: {e}")))

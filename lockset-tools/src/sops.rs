@@ -1,5 +1,4 @@
 use std::ffi::OsString;
-use std::fmt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::OnceLock;
@@ -8,47 +7,9 @@ use lockset_core::{Codec, Error, PathId, Result, SecretKey};
 
 use crate::env;
 
-/// The oldest sops this crate is written against.
-pub const MIN_VERSION: Version = Version {
-    major: 3,
-    minor: 13,
-    patch: 0,
-};
-
-/// A parsed `sops --version`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Version {
-    pub major: u32,
-    pub minor: u32,
-    pub patch: u32,
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
-    }
-}
-
-/// The first `major.minor[.patch]` token in `sops --version` output.
-pub fn parse_version(text: &str) -> Option<Version> {
-    for word in text.split_whitespace() {
-        let word = word.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
-        let mut parts = word.split('.');
-        let (Some(major), Some(minor)) = (parts.next(), parts.next()) else {
-            continue;
-        };
-        let (Ok(major), Ok(minor)) = (major.parse(), minor.parse()) else {
-            continue;
-        };
-        let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-        return Some(Version {
-            major,
-            minor,
-            patch,
-        });
-    }
-    None
-}
+/// The version type and the default minimum live in core, so `lockset.toml`
+/// can carry one; re-exported here because this is where sops is wrapped.
+pub use lockset_core::version::{parse_version, Version, MIN_VERSION};
 
 /// The prefix every age identity starts with.
 const SECRET_PREFIX: &str = "AGE-SECRET-KEY-";
@@ -89,15 +50,18 @@ fn redact(text: &str, key: Option<&SecretKey>) -> String {
 pub struct SopsCodec {
     root: PathBuf,
     bin: String,
+    /// The oldest version this repository accepts, from `codec.min_version`.
+    min: Version,
     /// The preflight result, so a command checks the tool once.
     checked: OnceLock<std::result::Result<Version, String>>,
 }
 
 impl SopsCodec {
-    pub fn new(root: impl Into<PathBuf>, bin: impl Into<String>) -> Self {
+    pub fn new(root: impl Into<PathBuf>, bin: impl Into<String>, min: Version) -> Self {
         Self {
             root: root.into(),
             bin: bin.into(),
+            min,
             checked: OnceLock::new(),
         }
     }
@@ -118,9 +82,9 @@ impl SopsCodec {
             .output()
             .map_err(|error| {
                 Error::tool(format!(
-                    "cannot run sops (`{}`): {error}; install sops >= {MIN_VERSION} \
+                    "cannot run sops (`{}`): {error}; install sops >= {} \
                      or pass --sops <path>",
-                    self.bin
+                    self.bin, self.min
                 ))
             })?;
         let text = format!(
@@ -134,15 +98,16 @@ impl SopsCodec {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::tool(format!(
-                "sops (`{}`) --version failed:{}; install sops >= {MIN_VERSION} \
+                "sops (`{}`) --version failed:{}; install sops >= {} \
                  or pass --sops <path>",
                 self.bin,
-                indent(&redact(stderr.trim_end(), None))
+                indent(&redact(stderr.trim_end(), None)),
+                self.min
             )));
         }
         Err(Error::tool(format!(
-            "cannot read the sops version from `{}`; expected output like `sops {MIN_VERSION}`",
-            self.bin
+            "cannot read the sops version from `{}`; expected output like `sops {}`",
+            self.bin, self.min
         )))
     }
 
@@ -152,9 +117,10 @@ impl SopsCodec {
         let checked = self.checked.get_or_init(|| {
             self.version()
                 .and_then(|version| {
-                    if version < MIN_VERSION {
+                    if version < self.min {
                         return Err(Error::tool(format!(
-                            "sops {version} is older than the required {MIN_VERSION};                              upgrade sops or pass --sops <path>"
+                            "sops {version} is older than the required {};                              upgrade sops or pass --sops <path>",
+                            self.min
                         )));
                     }
                     Ok(version)
@@ -345,7 +311,7 @@ mod tests {
 
     #[test]
     fn the_sops_child_holds_only_its_own_key() {
-        let codec = SopsCodec::new("/repo", "sops");
+        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION);
         let key = SecretKey::generate();
         let env = child_env(&command(&codec, &key));
 
@@ -362,7 +328,7 @@ mod tests {
 
     #[test]
     fn the_key_never_reaches_argv() {
-        let codec = SopsCodec::new("/repo", "sops");
+        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION);
         let key = SecretKey::generate();
         let argv: Vec<String> = command(&codec, &key)
             .get_args()
@@ -430,7 +396,7 @@ mod preflight_tests {
     #[test]
     fn preflight_accepts_the_minimum_version() {
         let sops = FakeSops::new("good", "#!/bin/sh\necho 'sops 3.13.3 (latest)'\n");
-        let codec = SopsCodec::new("/repo", sops.as_str());
+        let codec = SopsCodec::new("/repo", sops.as_str(), MIN_VERSION);
 
         assert_eq!(
             codec.preflight().unwrap(),
@@ -446,7 +412,7 @@ mod preflight_tests {
     #[test]
     fn preflight_rejects_an_old_sops() {
         let sops = FakeSops::new("old", "#!/bin/sh\necho 'sops 3.12.0'\n");
-        let codec = SopsCodec::new("/repo", sops.as_str());
+        let codec = SopsCodec::new("/repo", sops.as_str(), MIN_VERSION);
 
         let error = codec.preflight().unwrap_err();
 
@@ -460,7 +426,7 @@ mod preflight_tests {
     #[test]
     fn preflight_rejects_output_without_a_version() {
         let sops = FakeSops::new("garbage", "#!/bin/sh\necho 'what is sops'\n");
-        let codec = SopsCodec::new("/repo", sops.as_str());
+        let codec = SopsCodec::new("/repo", sops.as_str(), MIN_VERSION);
 
         let error = codec.preflight().unwrap_err();
 
@@ -472,7 +438,7 @@ mod preflight_tests {
 
     #[test]
     fn preflight_names_a_missing_binary_and_the_flag() {
-        let codec = SopsCodec::new("/repo", "/nonexistent/lockset-sops");
+        let codec = SopsCodec::new("/repo", "/nonexistent/lockset-sops", MIN_VERSION);
 
         let error = codec.preflight().unwrap_err();
         let message = error.to_string();

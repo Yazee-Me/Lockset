@@ -27,6 +27,8 @@ pub struct PayloadError {
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub root: String,
+    /// The sops config file this snapshot was built from, repo-relative.
+    pub sops_path: PathId,
     pub sops: SopsFile,
     pub payloads: Vec<PayloadMeta>,
     pub identity: Option<IdentityView>,
@@ -50,6 +52,8 @@ impl Snapshot {
     ) -> Self {
         Self {
             root: root.into(),
+            sops_path: PathId::parse(crate::config::DEFAULT_SOPS_CONFIG)
+                .expect("the default sops config path is valid"),
             sops,
             payloads,
             identity,
@@ -57,6 +61,12 @@ impl Snapshot {
             digests: BTreeMap::new(),
             payload_errors: Vec::new(),
         }
+    }
+
+    /// Record the sops config file this snapshot came from.
+    pub fn with_sops_path(mut self, path: PathId) -> Self {
+        self.sops_path = path;
+        self
     }
 
     /// Attach the payloads that could not be parsed.

@@ -4,6 +4,7 @@
 //! filesystem, or branches on the target OS. Every external capability is a
 //! port (`Codec`, `Custody`, `Repo`) implemented by another crate.
 
+pub mod config;
 pub mod digest;
 pub mod dotenv;
 pub mod error;
@@ -16,7 +17,9 @@ pub mod ports;
 pub mod report;
 pub mod snapshot;
 pub mod sopsfile;
+pub mod version;
 
+pub use config::{Config, Globs, Labels};
 pub use digest::digest;
 pub use error::{Error, Result};
 pub use model::{CustodyKind, Label, PathId, PubKey, SecretKey};
@@ -25,3 +28,4 @@ pub use plan::{Change, Plan, SecretValue};
 pub use ports::{Codec, Custody, Repo};
 pub use report::{Check, CheckReport, IdentityReport, PlanDocument, StatusReport, SCHEMA_VERSION};
 pub use snapshot::{IdentityView, PayloadError, Snapshot};
+pub use version::{parse_version, Version, MIN_VERSION};

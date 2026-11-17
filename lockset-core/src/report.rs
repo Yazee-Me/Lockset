@@ -212,8 +212,8 @@ pub fn next_step(snapshot: &Snapshot) -> String {
     if !snapshot.drift().is_empty() {
         return "next: fix the .sops.yaml / payload drift above".into();
     }
-    if snapshot.payloads.iter().any(|p| !p.empty.is_empty()) {
-        return "next: lockset set <KEY> --payload secrets/prod/infra.env".into();
+    if let Some(payload) = snapshot.payloads.iter().find(|p| !p.empty.is_empty()) {
+        return format!("next: lockset set <KEY> --payload {}", payload.id);
     }
     "ready".into()
 }

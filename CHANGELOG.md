@@ -17,6 +17,13 @@
   item holds it. `--custody file:<path>` needs no change beyond the variable
   name.
 
+- **No command defaults to a production payload.** `run` and `set` used to fall
+  back to `secrets/prod/infra.env`; they now use `repo.default_payloads` from
+  `lockset.toml`, and a repository that names none stops with exit 2 and lists
+  the payloads it does have. `set` needs exactly one default. Add
+  `lockset.toml` with `default_payloads = ["secrets/dev.env"]`, or pass
+  `--payload`.
+
 - **`lockset set` requires an explicit value source off a terminal.** A
   non-interactive run now needs `--stdin`, `--from-env NAME`, or the new
   `--value-file PATH`; it no longer reads stdin just because stdin is not a
@@ -25,6 +32,17 @@
   sources are mutually exclusive.
 
 ### Added
+
+- **`lockset.toml` carries the repository's conventions.** Every field is
+  optional: `repo.sops_config`, `repo.payload_globs`, `repo.default_payloads`,
+  `labels.admin`, `labels.person_prefix`, `custody.kind`, `custody.env`,
+  `custody.keychain_item`, `codec.sops`, and `codec.min_version`. The layers
+  are flags, then environment (`LOCKSET_CONFIG`, `LOCKSET_REPO`, `LOCKSET_SOPS`,
+  the identity variable), then the file, then the defaults. `--config` selects
+  a different file, and `LOCKSET_REPO` supplies the root when `--repo` is absent.
+  A config error names the file and the field and exits 2.
+- `doctor` reports the sops config it read and the configured default payloads,
+  and its custody findings use the configured variable and keychain item names.
 
 - `lockset run --clean-env` gives the command only `PATH`, `HOME`, `TMPDIR`, and
   `LANG` from the parent plus the payload values, for jobs that would otherwise
@@ -41,6 +59,9 @@
 
 ### Changed
 
+- Payload discovery walks the repository and keeps what `repo.payload_globs`
+  matches, so conventions outside `secrets/**` need no code change; the admin
+  coverage check uses `labels.admin`.
 - `lockset run` hands the child its own exit status: on Unix the CLI `exec`s the
   command, so its exit code and terminating signals pass through untouched;
   elsewhere the wait status is propagated, mapping a signal to `128 + signal`.

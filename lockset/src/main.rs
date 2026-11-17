@@ -111,7 +111,7 @@ fn run() -> Result<u8> {
             &context,
             &cli,
             key,
-            payload,
+            payload.as_deref(),
             *if_absent,
             &input::ValueSource {
                 stdin: *stdin,
@@ -169,8 +169,51 @@ fn run() -> Result<u8> {
     }
 }
 
-/// The default payload `run` and `set` fall back to.
-const DEFAULT_PAYLOAD: &str = "secrets/prod/infra.env";
+/// The payloads a command falls back to when no `--payload` is given: the
+/// config's `repo.default_payloads`. A repository that configures none gets an
+/// error naming what it does have; no production path is invented.
+fn selected_payloads(context: &wiring::Context) -> Result<Vec<PathId>> {
+    if context.config.has_default_payloads() {
+        return Ok(context.config.default_payloads.clone());
+    }
+    Err(no_default_payload(context))
+}
+
+fn one_default_payload(context: &wiring::Context) -> Result<PathId> {
+    match context.config.default_payloads.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(no_default_payload(context)),
+        many => Err(usage::error(format!(
+            "set writes one payload, but repo.default_payloads lists {} ({}); pass --payload <PATH>",
+            many.len(),
+            many.iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+fn no_default_payload(context: &wiring::Context) -> anyhow::Error {
+    let discovered = wiring::snapshot(context)
+        .map(|snapshot| {
+            snapshot
+                .payloads
+                .iter()
+                .map(|payload| payload.id.as_str().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let list = if discovered.is_empty() {
+        "the repository has no payloads".to_owned()
+    } else {
+        format!("discovered: {}", discovered.join(", "))
+    };
+    usage::error(format!(
+        "no payload selected: pass --payload <PATH> or set repo.default_payloads in \
+         lockset.toml ({list})"
+    ))
+}
 
 /// Preflight for a pipeline: repo, sops, custody, identity, coverage, payloads,
 /// and the CI custody policy. Every item is a finding, so the exit code is 1
@@ -183,7 +226,11 @@ fn doctor(context: &wiring::Context, cli: &Cli) -> Result<u8> {
             checks.push(Check {
                 name: "repo".into(),
                 ok: true,
-                detail: context.root.display().to_string(),
+                detail: format!(
+                    "{} (sops config: {})",
+                    context.root.display(),
+                    context.config.sops_config
+                ),
             });
             Some(snapshot)
         }
@@ -238,7 +285,10 @@ fn doctor(context: &wiring::Context, cli: &Cli) -> Result<u8> {
     checks.push(Check {
         name: "legacy identity sources".into(),
         ok: true,
-        detail: "only LOCKSET_AGE_KEY and the lockset-age-key item are read".into(),
+        detail: format!(
+            "only {} and the {} item are read",
+            context.config.custody.env, context.config.custody.keychain_item
+        ),
     });
 
     let kind = context.custody.kind();
@@ -319,22 +369,42 @@ fn doctor(context: &wiring::Context, cli: &Cli) -> Result<u8> {
                 },
             });
 
-            let has_default = status
-                .payloads
+            let defaults = &context.config.default_payloads;
+            let missing: Vec<&PathId> = defaults
                 .iter()
-                .any(|payload| payload.path.as_str() == DEFAULT_PAYLOAD);
+                .filter(|id| !status.payloads.iter().any(|payload| &payload.path == *id))
+                .collect();
             checks.push(Check {
-                name: "default payload".into(),
-                ok: has_default,
-                detail: if has_default {
-                    DEFAULT_PAYLOAD.to_owned()
+                name: "default payloads".into(),
+                ok: missing.is_empty(),
+                detail: if defaults.is_empty() {
+                    "none configured; run and set need --payload".to_owned()
+                } else if missing.is_empty() {
+                    defaults
+                        .iter()
+                        .map(|id| id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 } else {
-                    format!("{DEFAULT_PAYLOAD} (missing; pass --payload)")
+                    format!(
+                        "missing: {}; discovered: {}",
+                        missing
+                            .iter()
+                            .map(|id| id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        status
+                            .payloads
+                            .iter()
+                            .map(|payload| payload.path.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 },
             });
         }
         None => {
-            for name in ["identity", "coverage", "payloads", "default payload"] {
+            for name in ["identity", "coverage", "payloads", "default payloads"] {
                 checks.push(Check {
                     name: name.into(),
                     ok: false,
@@ -355,7 +425,7 @@ fn doctor(context: &wiring::Context, cli: &Cli) -> Result<u8> {
 
 fn check(context: &wiring::Context, cli: &Cli) -> Result<u8> {
     let snapshot = wiring::snapshot(context)?;
-    let mut results = ops::checks(&snapshot);
+    let mut results = ops::checks(&snapshot, &context.config.labels);
 
     // A label is a name, not a permission: whatever identity this machine has
     // gets a decrypt proof for every payload it is a recipient of.
@@ -412,7 +482,7 @@ fn run_command(
     duplicates: DuplicateKeys,
 ) -> Result<u8> {
     let ids: Vec<PathId> = if payload.is_empty() {
-        vec![payload_id("secrets/prod/infra.env")?]
+        selected_payloads(context)?
     } else {
         payload
             .iter()
@@ -609,7 +679,10 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
             let covered = snapshot.payloads_with(&public);
             if covered.is_empty() {
                 log::warn!("{public} is not a recipient of any payload yet");
-                log::warn!("ask an operator: lockset grant {public} --label dev-<name>");
+                log::warn!(
+                    "ask an operator: lockset grant {public} --label {}<name>",
+                    context.config.labels.person_prefix
+                );
                 return Ok(1);
             }
             for payload in &covered {
@@ -691,14 +764,17 @@ fn set(
     context: &wiring::Context,
     cli: &Cli,
     name: &str,
-    payload: &str,
+    payload: Option<&str>,
     if_absent: bool,
     source: &input::ValueSource<'_>,
 ) -> Result<u8> {
     if !lockset_core::meta::is_name(name) {
         return Err(usage::error(format!("invalid key name: {name}")));
     }
-    let id = payload_id(payload)?;
+    let id = match payload {
+        Some(path) => payload_id(path)?,
+        None => one_default_payload(context)?,
+    };
     let snapshot = wiring::snapshot(context)?;
     if snapshot.payload(&id).is_none() {
         if let Some(error) = snapshot.payload_error(&id) {
@@ -707,7 +783,7 @@ fn set(
                 error.id, error.error
             )));
         }
-        return Err(usage::error(format!("no such payload: {payload}")));
+        return Err(usage::error(format!("no such payload: {id}")));
     }
     if if_absent && key_is_set(context, &id, name)? {
         log::info!("{name} already has a value in {id}; nothing to do (--if-absent)");

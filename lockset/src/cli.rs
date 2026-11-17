@@ -11,9 +11,14 @@ use clap::{Parser, Subcommand};
     after_help = crate::usage::HELP
 )]
 pub struct Cli {
-    /// Repository root; defaults to the current directory and walks up to .sops.yaml
+    /// Repository root; defaults to LOCKSET_REPO, then the current directory,
+    /// walking up to .sops.yaml or lockset.toml
     #[arg(long, global = true, value_name = "DIR")]
     pub repo: Option<PathBuf>,
+
+    /// lockset.toml to read; overrides LOCKSET_CONFIG (default: <repo>/lockset.toml)
+    #[arg(long, global = true, value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// env | keyring | file:<path> (absolute, mode 0600, outside the repo; default: env when
     /// LOCKSET_AGE_KEY is set, else keyring on a terminal and none otherwise)
@@ -79,7 +84,7 @@ pub enum Command {
     },
     /// Run a command with one or more payloads in its environment (identity stripped)
     Run {
-        /// Payload to load (repeatable); default secrets/prod/infra.env
+        /// Payload to load (repeatable); default repo.default_payloads from lockset.toml
         #[arg(long = "payload", value_name = "PATH")]
         payload: Vec<String>,
         /// Hand the child the identity environment; prefer passing an identity file
@@ -101,8 +106,9 @@ pub enum Command {
     Set {
         /// Key name in the payload
         key: String,
-        #[arg(long = "payload", default_value = "secrets/prod/infra.env")]
-        payload: String,
+        /// Payload to write; default repo.default_payloads (exactly one) from lockset.toml
+        #[arg(long = "payload", value_name = "PATH")]
+        payload: Option<String>,
         /// Read the value from stdin
         #[arg(long, conflicts_with_all = ["from_env", "value_file"])]
         stdin: bool,

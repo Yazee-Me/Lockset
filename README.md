@@ -41,8 +41,9 @@ Every mutating command prints its plan; `--dry-run` stops there.
   A sops failure names the payload and keeps every stderr line, indented under
   the error; the identity is replaced with `[redacted]` first, so a tool that
   echoes its environment cannot print the key into a CI log.
-- An age identity: `LOCKSET_AGE_KEY` when set, the keychain item
-  `lockset-age-key`, or an explicit `--custody file:<path>`. Give `file:` an
+- An age identity: `LOCKSET_AGE_KEY` when set (or the variable `custody.env`
+  names), the keychain item `lockset-age-key` (or `custody.keychain_item`), or
+  an explicit `--custody file:<path>`. Give `file:` an
   absolute path outside the repository — a mounted secret such as
   `/run/secrets/age-key`, for instance: the key file is created with mode 0600,
   and a symlink, a non-regular file, a path inside the repository, or a file
@@ -52,16 +53,16 @@ Every mutating command prints its plan; `--dry-run` stops there.
   reports no identity and asks for `LOCKSET_AGE_KEY`, `--custody file:<path>`, or
   an explicit `--custody keyring`. An unknown `--custody` form exits 2 and lists
   the valid ones.
-- A repository with `.sops.yaml` at its root, payloads as `secrets/**/*.env`,
-  and recipients labelled by a trailing `# label,...` comment in recipient
-  order. Payload paths are repository-relative: an absolute path, `..`, a
+- A repository with `.sops.yaml` at its root (or the `repo.sops_config` path),
+  payloads as `secrets/**/*` (or `repo.payload_globs`), and recipients labelled
+  by a trailing `# label,...` comment in recipient order. Payload paths are repository-relative: an absolute path, `..`, a
   backslash, an empty segment, or a leading `-` is a usage error (exit 2) before
   any sops call.
-- The only payload format is dotenv (`.env`). Every other non-hidden file under
-  `secrets/` is reported as an unsupported payload in `status` and `check`, and
-  `run`/`set` reject it with a message naming the format, so no payload is
-  silently ignored or half-counted. Hidden files (`.gitkeep`, editor
-  temporaries) are not payloads.
+- The only payload format is dotenv (`.env`). Every non-hidden file matched by
+  `repo.payload_globs` is reported as an unsupported payload in `status` and
+  `check` when it is another format, and `run`/`set` reject it with a message
+  naming the format, so no payload is silently ignored or half-counted. Hidden
+  files (`.gitkeep`, editor temporaries) are not payloads.
 
 ## Use
 
@@ -71,7 +72,7 @@ cargo install --path lockset --locked
 lockset doctor                       # preflight: repo, sops, custody, identity, coverage, CI policy
 lockset status                       # identity, payloads, coverage, drift, empty values
 lockset who                          # label -> public key, payload count, local key
-lockset run --payload secrets/dev.env -- ./my-command
+lockset run --payload secrets/dev.env -- ./my-command   # or repo.default_payloads
 lockset run --pass-custody -- ./tool  # deliberate exception: the child gets the identity environment
 lockset run --clean-env -- ./my-command  # only PATH, HOME, TMPDIR, LANG plus the payloads
 lockset run --payload secrets/a.env --payload secrets/b.env --last-wins -- ./my-command
@@ -124,6 +125,53 @@ secret; an empty value counts as absent, and the note that says so is on stderr.
 Reading the payload needs the identity, so `--if-absent` asks for it even with
 `--dry-run`.
 
+## Configuration
+
+`lockset.toml` at the repository root, when present, carries the repository's
+conventions. Every field is optional and takes the value shown; the layers are,
+highest first, flags, environment, this file, the defaults.
+
+```toml
+[repo]
+sops_config = ".sops.yaml"               # the map --repo walks up to (with lockset.toml)
+payload_globs = ["secrets/**/*"]         # which files are payloads
+default_payloads = ["secrets/dev.env"]   # what run and set use without --payload
+
+[labels]
+admin = "admin"                          # the label that must open every payload
+person_prefix = "dev-"                   # suggested for person add
+
+[custody]
+kind = "auto"                            # auto | env | keyring | file:<path> | none
+env = "LOCKSET_AGE_KEY"
+keychain_item = "lockset-age-key"
+
+[codec]
+sops = "sops"                            # --sops > LOCKSET_SOPS > this
+min_version = "3.13.0"                   # the preflight floor
+```
+
+`run` and `set` never invent a payload: without `--payload` they use
+`repo.default_payloads`, and a repository that names none stops with exit 2 and
+lists the payloads it does have; `set` needs exactly one. A setting's precedence:
+
+| Setting | Flag | Environment | File |
+| --- | --- | --- | --- |
+| repository root | `--repo` | `LOCKSET_REPO` | walks up from the cwd |
+| config file | `--config` | `LOCKSET_CONFIG` | `lockset.toml` at the root |
+| sops binary | `--sops` | `LOCKSET_SOPS` | `codec.sops` |
+| custody | `--custody` | the identity variable | `custody.*` |
+| payloads | `--payload` | — | `repo.default_payloads` |
+
+A config error names the file and the field and exits 2, so a typo cannot
+quietly change which secrets a pipeline reads.
+
+```sh
+lockset --config ./ci/lockset.toml doctor
+LOCKSET_REPO=/srv/app lockset status     # no --repo, no cd
+lockset --dry-run set NEW --from-env NEW # uses repo.default_payloads
+```
+
 ## Machine-readable output
 
 `status`, `who`, and `check` take `--json`, and a plan is JSON with
@@ -173,7 +221,7 @@ whenever one command can consume the values.
 checks the repository and `.sops.yaml`, that `sops` is present and at least
 3.13, which custody is in use and whether it is readable, that only the current
 identity sources are read, the identity itself, its coverage, the payloads, the
-default payload (`secrets/prod/infra.env`), and the CI custody policy (a
+configured default payloads, and the CI custody policy (a
 non-interactive run must have an identity source). It exits 1 and names every
 failing check; `doctor --json` is the same report as a `schema_version: 1`
 document.

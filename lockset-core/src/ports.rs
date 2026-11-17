@@ -20,9 +20,12 @@ pub trait Custody {
     fn kind(&self) -> CustodyKind;
 }
 
-/// Repository artifacts: payloads and `.sops.yaml`, addressed by relative path.
+/// Repository artifacts: payloads and the sops config, addressed by relative path.
 pub trait Repo {
     fn list(&self, prefix: &PathId) -> Result<Vec<PathId>>;
+    /// Every non-hidden file in the repository, repo-relative. Callers decide
+    /// which of them are payloads; nothing here knows a payload's path.
+    fn walk(&self) -> Result<Vec<PathId>>;
     fn read(&self, id: &PathId) -> Result<Vec<u8>>;
     fn write(&self, id: &PathId, bytes: &[u8]) -> Result<()>;
 }

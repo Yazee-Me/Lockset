@@ -242,6 +242,10 @@ mod tests {
             Ok(Vec::new())
         }
 
+        fn walk(&self) -> Result<Vec<PathId>> {
+            Ok(Vec::new())
+        }
+
         fn read(&self, id: &PathId) -> Result<Vec<u8>> {
             self.files
                 .borrow()

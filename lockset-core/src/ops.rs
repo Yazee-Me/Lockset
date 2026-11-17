@@ -5,7 +5,7 @@ use crate::snapshot::Snapshot;
 use crate::{Error, Result};
 
 /// Invariants that never need a private key, plus the local-key coverage.
-pub fn checks(snapshot: &Snapshot) -> Vec<Check> {
+pub fn checks(snapshot: &Snapshot, labels: &crate::config::Labels) -> Vec<Check> {
     let mut out = Vec::new();
 
     out.push(match (&snapshot.identity, &snapshot.identity_error) {
@@ -97,7 +97,7 @@ pub fn checks(snapshot: &Snapshot) -> Vec<Check> {
         .rules()
         .iter()
         .flat_map(|r| r.recipients.iter())
-        .find(|r| r.label.as_ref().is_some_and(|l| l.as_str() == "admin"))
+        .find(|r| r.label.as_ref().is_some_and(|l| l == &labels.admin))
         .map(|r| r.key.clone());
     match admin {
         Some(admin) => {
@@ -115,7 +115,7 @@ pub fn checks(snapshot: &Snapshot) -> Vec<Check> {
         None => out.push(Check {
             name: "admin opens every payload".into(),
             ok: false,
-            detail: "no recipient is labelled admin".into(),
+            detail: format!("no recipient is labelled {}", labels.admin),
         }),
     }
 
@@ -185,7 +185,7 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
 
     let text = snapshot.sops.render_with(&sets)?;
     plan.push(crate::plan::Change::WriteFile {
-        path: PathId::parse(".sops.yaml")?,
+        path: snapshot.sops_path.clone(),
         contents: text,
     });
     for payload in &snapshot.payloads {
@@ -446,6 +446,11 @@ mod tests {
     const A: &str = "age1p243ylp98pr939vj8eqsmaczq8c9gwxwnlupz9pvelpfj6ha0cgqjsue6x";
     const B: &str = "age1vvq9jvcxj0xw2jl4x0az4ndvg7ew39c2pge0u8scdpwejlyazyjqqcs64q";
     const C: &str = "age1y4gs9hk93n3mpvhwydaq7uz4mn3a0esf0wfh3md2v2qz4hye9frsfpelwh";
+
+    /// The default label conventions, which every test but the label one uses.
+    fn checks(snapshot: &Snapshot) -> Vec<Check> {
+        super::checks(snapshot, &crate::config::Labels::default())
+    }
 
     fn sops() -> SopsFile {
         SopsFile::parse(&format!(

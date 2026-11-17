@@ -59,6 +59,17 @@
 
 ### Added
 
+- **The identity registry lives in `lockset.toml`.** `[[identities]]` entries
+  carry `label`, `public`, and optional `roles`; duplicate labels or keys and
+  invalid fields are refused by name (exit 2). Once the registry exists it is
+  the source of truth: `who` lists it, `grant` requires the identity to be
+  registered (and refuses a label registered to another key), `revoke --label`
+  resolves through it, and the `admin` role decides admin coverage instead of
+  the `labels.admin` label.
+- `lockset who --toml` prints a `[[identities]]` block from the current
+  `.sops.yaml` comments, for the documented one-time migration; it changes no
+  recipients, and unlabelled recipients are named on stderr.
+
 - A sops rule keyed by another backend (`pgp`, `kms`, `gcp_kms`, `azure_kv`,
   `hc_vault_transit_uri`) no longer fails the whole file: it parses, `status`
   lists its payloads, and `check` reports it per rule with the backend and what
@@ -71,6 +82,10 @@
 
 ### Fixed
 
+- Rewriting the sops config no longer destroys comments that are not a label
+  list: free text after the age keys is preserved verbatim, a partial label
+  list is kept instead of being regenerated misaligned, and a comment conflict
+  with the registry is reported as drift rather than silently overwritten.
 - `revoke` wrote `.sops.yaml` even when `repo.sops_config` named another file;
   it now writes the configured path, like `grant`.
 

@@ -285,6 +285,7 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
     };
 
     let mut snapshot = Snapshot::new(context.root.display().to_string(), sops, payloads, identity)
+        .with_registry(context.config.registry.clone())
         .with_sops_path(sops_path)
         .with_digests(digests)
         .with_payload_errors(payload_errors);

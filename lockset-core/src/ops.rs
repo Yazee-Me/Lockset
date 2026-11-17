@@ -110,31 +110,54 @@ pub fn checks(snapshot: &Snapshot, labels: &crate::config::Labels) -> Vec<Check>
         detail: drift.join("; "),
     });
 
-    let admin = snapshot
-        .sops
-        .rules()
-        .iter()
-        .flat_map(|r| r.recipients.iter())
-        .find(|r| r.label.as_ref().is_some_and(|l| l == &labels.admin))
-        .map(|r| r.key.clone());
-    match admin {
-        Some(admin) => {
-            let missing = snapshot.payloads_missing(&admin);
-            out.push(Check {
-                name: "admin opens every payload".into(),
-                ok: missing.is_empty(),
-                detail: missing
-                    .iter()
-                    .map(|p| p.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            });
+    // The registry's `admin` role wins; a comment label is the legacy fallback.
+    let mut admin_keys: Vec<crate::model::PubKey> = snapshot
+        .registry
+        .admin_keys()
+        .into_iter()
+        .cloned()
+        .collect();
+    // Comments are migration input: they only decide when no registry exists.
+    if snapshot.registry.is_empty() {
+        for rule in snapshot.sops.rules() {
+            for recipient in &rule.recipients {
+                if recipient.label.as_ref() == Some(&labels.admin)
+                    && !admin_keys.contains(&recipient.key)
+                {
+                    admin_keys.push(recipient.key.clone());
+                }
+            }
         }
-        None => out.push(Check {
+    }
+    if admin_keys.is_empty() {
+        out.push(Check {
             name: "admin opens every payload".into(),
             ok: false,
-            detail: format!("no recipient is labelled {}", labels.admin),
-        }),
+            detail: if snapshot.registry.is_empty() {
+                format!("no recipient is labelled {}", labels.admin)
+            } else {
+                format!(
+                    "no identity in lockset.toml has the {} role",
+                    crate::config::ADMIN_ROLE
+                )
+            },
+        });
+    } else {
+        // A payload is covered when any admin key opens it.
+        let missing: Vec<&crate::meta::PayloadMeta> = snapshot
+            .payloads
+            .iter()
+            .filter(|payload| !admin_keys.iter().any(|key| payload.has(key)))
+            .collect();
+        out.push(Check {
+            name: "admin opens every payload".into(),
+            ok: missing.is_empty(),
+            detail: missing
+                .iter()
+                .map(|payload| payload.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        });
     }
 
     if let Some(identity) = &snapshot.identity {
@@ -177,6 +200,35 @@ pub struct GrantRequest {
     pub only: Option<Vec<PathId>>,
 }
 
+/// The label a grant may write into the `.sops.yaml` comment. With a registry,
+/// the grant must match a registered identity and no comment is written; the
+/// comment path remains for repositories in the middle of migrating.
+fn grant_comment_label(snapshot: &Snapshot, request: &GrantRequest) -> Result<Option<Label>> {
+    if snapshot.registry.is_empty() {
+        return Ok(Some(request.label.clone()));
+    }
+    match snapshot.registry.label_for(&request.key) {
+        Some(label) if label == &request.label => Ok(None),
+        Some(label) => Err(Error::refused(format!(
+            "{} is registered as {label} in lockset.toml, not {}; fix the entry or pass --label {label}",
+            request.key, request.label
+        ))),
+        None => {
+            if let Some(other) = snapshot.registry.keys_for_label(&request.label).first() {
+                return Err(Error::refused(format!(
+                    "label {} is registered to {other} in lockset.toml; fix the entry or pass the right label",
+                    request.label
+                )));
+            }
+            Err(Error::refused(format!(
+                "{} is not in lockset.toml; add an [[identities]] entry with label = \"{}\" and this \
+                 public key (or start from the comments with `lockset who --toml`)",
+                request.key, request.label
+            )))
+        }
+    }
+}
+
 /// Plan: add a recipient to the targeted rules, then re-wrap those payloads.
 pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan::Plan> {
     let rules = snapshot.sops.rules();
@@ -198,6 +250,7 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
     };
 
     refuse_without_age_rule(snapshot, &targets)?;
+    let comment_label = grant_comment_label(snapshot, request)?;
 
     let mut sets: Vec<Vec<crate::sopsfile::Recipient>> =
         rules.iter().map(|r| r.recipients.clone()).collect();
@@ -206,7 +259,7 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
         if !sets[*index].iter().any(|r| r.key == request.key) {
             sets[*index].push(crate::sopsfile::Recipient {
                 key: request.key.clone(),
-                label: Some(request.label.clone()),
+                label: comment_label.clone(),
             });
             added.push(*index);
         }
@@ -309,27 +362,31 @@ pub fn revoke(snapshot: &Snapshot, request: &RevokeRequest) -> Result<crate::pla
     let key = match &request.target {
         RevokeTarget::Key(key) => key.clone(),
         RevokeTarget::Label(label) => {
-            let keys: Vec<&PubKey> = snapshot
-                .sops
-                .rules()
-                .iter()
-                .flat_map(|r| r.recipients.iter())
-                .filter(|r| r.label.as_ref() == Some(label))
-                .map(|r| &r.key)
+            // The registry wins; comment labels are the migration fallback.
+            let mut unique: Vec<PubKey> = snapshot
+                .registry
+                .keys_for_label(label)
+                .into_iter()
+                .cloned()
                 .collect();
-            let mut unique: Vec<&PubKey> = Vec::new();
-            for k in keys {
-                if !unique.contains(&k) {
-                    unique.push(k);
+            if unique.is_empty() {
+                for rule in snapshot.sops.rules() {
+                    for recipient in &rule.recipients {
+                        if recipient.label.as_ref() == Some(label)
+                            && !unique.contains(&recipient.key)
+                        {
+                            unique.push(recipient.key.clone());
+                        }
+                    }
                 }
             }
             match unique.len() {
                 0 => {
                     return Err(Error::invalid(format!(
-                        "no identity labelled {label} in .sops.yaml"
+                        "no identity labelled {label} in lockset.toml or the .sops.yaml comments"
                     )))
                 }
-                1 => unique[0].clone(),
+                1 => unique.remove(0),
                 _ => {
                     return Err(Error::refused(format!(
                         "label {label} names {} keys; pass the public key instead",
@@ -935,6 +992,187 @@ mod tests {
             payload("secrets/kms/infra.env", &[]),
         ];
         Snapshot::new(".", sops, payloads, None)
+    }
+
+    fn identity(label: &str, key: &str, roles: &[&str]) -> crate::config::Identity {
+        crate::config::Identity {
+            label: Label::parse(label).unwrap(),
+            public: PubKey::parse(key).unwrap(),
+            roles: roles
+                .iter()
+                .map(|role| Label::parse(role).unwrap())
+                .collect(),
+        }
+    }
+
+    fn registry(identities: Vec<crate::config::Identity>) -> crate::config::IdentityRegistry {
+        crate::config::IdentityRegistry::new(identities)
+    }
+
+    /// The main fixture, with `A` as admin/recovery and `B` as recovery.
+    fn registry_snapshot(identities: Vec<crate::config::Identity>) -> Snapshot {
+        snapshot(Some(A)).with_registry(registry(identities))
+    }
+
+    #[test]
+    fn the_registry_label_wins_over_a_comment() {
+        let snap = registry_snapshot(vec![identity("dev-alice", B, &[])]);
+
+        assert_eq!(
+            snap.label_for(&PubKey::parse(B).unwrap())
+                .map(|l| l.to_string()),
+            Some("dev-alice".to_owned())
+        );
+        let drift = snap.drift().join("; ");
+        assert!(
+            drift.contains(
+                "lockset.toml labels it dev-alice, but the .sops.yaml comment says recovery"
+            ),
+            "{drift}"
+        );
+    }
+
+    #[test]
+    fn a_comment_label_without_a_registry_entry_is_drift() {
+        let snap = registry_snapshot(vec![identity("admin", A, &[])]);
+
+        let drift = snap.drift().join("; ");
+        assert!(
+            drift.contains("the .sops.yaml comment labels it ci, but lockset.toml has no identity for it")
+                || drift.contains("the .sops.yaml comment labels it recovery, but lockset.toml has no identity for it"),
+            "{drift}"
+        );
+
+        // `who` shows the registry first, then the comment labels the registry
+        // does not cover.
+        let labels: Vec<String> = snap
+            .labels()
+            .into_iter()
+            .map(|(label, _, _)| label.to_string())
+            .collect();
+        assert_eq!(labels.first().map(String::as_str), Some("admin"));
+        assert!(labels.contains(&"recovery".to_owned()), "{labels:?}");
+        assert!(labels.contains(&"ci".to_owned()), "{labels:?}");
+    }
+
+    #[test]
+    fn without_a_registry_the_comments_are_the_labels() {
+        let snap = snapshot(Some(A));
+
+        assert_eq!(
+            snap.label_for(&PubKey::parse(C).unwrap())
+                .map(|l| l.to_string()),
+            Some("ci".to_owned())
+        );
+        assert!(snap
+            .drift()
+            .iter()
+            .all(|note| !note.contains("lockset.toml")));
+    }
+
+    #[test]
+    fn the_admin_role_decides_coverage() {
+        let snap = registry_snapshot(vec![identity("ops", A, &["admin"])]);
+        let admin = checks(&snap)
+            .into_iter()
+            .find(|check| check.name == "admin opens every payload")
+            .unwrap();
+        assert!(admin.ok, "{admin:?}");
+
+        let roleless = registry_snapshot(vec![identity("ops", A, &[])]);
+        let admin = checks(&roleless)
+            .into_iter()
+            .find(|check| check.name == "admin opens every payload")
+            .unwrap();
+        assert!(!admin.ok, "{admin:?}");
+        assert!(admin.detail.contains("admin role"), "{admin:?}");
+    }
+
+    #[test]
+    fn grant_from_the_registry_writes_no_comment() {
+        let snap = registry_snapshot(vec![
+            identity("admin", A, &["admin"]),
+            identity("dev-carol", C, &[]),
+        ]);
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-carol").unwrap(),
+            only: None,
+        };
+
+        let plan = grant(&snap, &request).unwrap();
+
+        let contents = plan
+            .changes
+            .iter()
+            .find_map(|change| match change {
+                crate::plan::Change::WriteFile { contents, .. } => Some(contents),
+                _ => None,
+            })
+            .expect("a map write");
+        assert!(contents.contains(C), "{contents}");
+        assert!(!contents.contains("dev-carol"), "{contents}");
+        assert!(contents.contains("# admin,recovery"), "{contents}");
+    }
+
+    #[test]
+    fn grant_refuses_an_unregistered_identity() {
+        let snap = registry_snapshot(vec![identity("admin", A, &["admin"])]);
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-carol").unwrap(),
+            only: None,
+        };
+
+        let error = grant(&snap, &request).unwrap_err();
+
+        assert!(matches!(error, Error::Refused(_)), "{error:?}");
+        assert!(
+            error.to_string().contains("is not in lockset.toml"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("who --toml"), "{error}");
+    }
+
+    #[test]
+    fn grant_refuses_a_registered_key_under_another_label() {
+        let snap = registry_snapshot(vec![identity("dev-alice", C, &[])]);
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-carol").unwrap(),
+            only: None,
+        };
+
+        let error = grant(&snap, &request).unwrap_err();
+
+        assert!(
+            error.to_string().contains("registered as dev-alice"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn revoke_by_label_uses_the_registry() {
+        // The comment calls B "recovery"; the registry calls it "dev-alice".
+        let snap = registry_snapshot(vec![identity("dev-alice", B, &[])]);
+        let request = RevokeRequest {
+            target: RevokeTarget::Label(Label::parse("dev-alice").unwrap()),
+            keep_data_key: true,
+            force: false,
+        };
+
+        let plan = revoke(&snap, &request).unwrap();
+
+        let contents = plan
+            .changes
+            .iter()
+            .find_map(|change| match change {
+                crate::plan::Change::WriteFile { contents, .. } => Some(contents),
+                _ => None,
+            })
+            .expect("a map write");
+        assert!(!contents.contains(B), "{contents}");
+        assert!(contents.contains("age: "), "{contents}");
     }
 
     #[test]

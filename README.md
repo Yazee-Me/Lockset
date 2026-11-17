@@ -138,8 +138,13 @@ sops_config = ".sops.yaml"               # the map --repo walks up to (with lock
 payload_globs = ["secrets/**/*"]         # which files are payloads
 default_payloads = ["secrets/dev.env"]   # what run and set use without --payload
 
+[[identities]]
+label = "admin"                          # the registry wins over .sops.yaml comments
+public = "age1..."                       # one entry per identity
+roles = ["admin"]                        # `admin`: must open every payload
+
 [labels]
-admin = "admin"                          # the label that must open every payload
+admin = "admin"                          # legacy label used while no registry exists
 person_prefix = "dev-"                   # suggested for person add
 
 [custody]
@@ -170,6 +175,29 @@ quietly change which secrets a pipeline reads.
 Discovery walks the repository once, skips symlinks and hidden files, dedupes
 canonical paths, and keeps what `repo.payload_globs` matches; the dotenv-only
 format check still applies to everything it keeps.
+
+### Labels and the identity registry
+
+The `[[identities]]` entries are the source of truth for labels: `who` lists
+them, `grant` requires the identity to be registered, and `revoke --label`
+resolves through them. Trailing `# label,...` comments in the sops config are a
+**migration input only** once a registry exists: a comment label that conflicts
+with the registry (or names a key the registry does not know) is reported as
+drift, never silently repaired.
+
+Convert a comment-labelled repository once:
+
+```sh
+lockset who --toml >> lockset.toml   # review the block, then commit it
+lockset who                          # same labels, now from config
+```
+
+The conversion changes no recipients. Every rewrite still keeps what it did not
+touch: free-text comments (for example `# admin,recovery (managed by
+terraform)`) are preserved verbatim, a label-only comment is regenerated only
+when every key still has a label, and line endings are kept. The `admin` role
+replaces the `labels.admin` label for the coverage check; the label stays the
+fallback for repositories that have not migrated.
 
 ### Mixed recipient backends
 

@@ -39,7 +39,10 @@ fn json_requested(cli: &Cli) -> Result<bool> {
         return Ok(false);
     }
     match &cli.command {
-        Command::Status { .. } | Command::Who | Command::Check | Command::Doctor => Ok(true),
+        Command::Who { toml: true } if cli.json => Err(usage::error(
+            "--json prints the identity map; --toml prints a lockset.toml fragment",
+        )),
+        Command::Status { .. } | Command::Who { .. } | Command::Check | Command::Doctor => Ok(true),
         Command::Run { .. } => Err(usage::error(
             "--json prints plans and reports; run has no JSON output",
         )),
@@ -88,8 +91,32 @@ fn run() -> Result<u8> {
             }
             Ok(0)
         }
-        Command::Who => {
-            let report = IdentityReport::new(&wiring::snapshot(&context)?);
+        Command::Who { toml } => {
+            let snapshot = wiring::snapshot(&context)?;
+            if *toml {
+                if !snapshot.registry.is_empty() {
+                    log::warn!(
+                        "lockset.toml already registers {} identities; this block is the comment \
+                         view and may be stale",
+                        snapshot.registry.identities().len()
+                    );
+                }
+                let unlabelled = snapshot
+                    .sops
+                    .rules()
+                    .iter()
+                    .flat_map(|rule| rule.recipients.iter())
+                    .filter(|recipient| recipient.label.is_none())
+                    .count();
+                if unlabelled > 0 {
+                    log::warn!(
+                        "{unlabelled} recipient(s) have no comment label; add them to lockset.toml by hand"
+                    );
+                }
+                print!("{}", render::identities_toml(&snapshot));
+                return Ok(0);
+            }
+            let report = IdentityReport::new(&snapshot);
             if cli.json {
                 println!("{}", render::json(&report)?);
             } else {

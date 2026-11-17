@@ -62,7 +62,12 @@ pub enum Command {
         strict: bool,
     },
     /// Identity map: label, public key, payload count, whether it is the local key
-    Who,
+    Who {
+        /// Print a lockset.toml [[identities]] fragment from the .sops.yaml
+        /// comments, for the one-time migration
+        #[arg(long)]
+        toml: bool,
+    },
     /// Invariants that need no private key, plus decrypt verification for this machine
     Check,
     /// Preflight: repo, sops, custody, identity, coverage, payloads, CI policy

@@ -9,7 +9,7 @@
 use serde::Deserialize;
 
 use crate::meta::require_dotenv;
-use crate::model::{Label, PathId};
+use crate::model::{Label, PathId, PubKey};
 use crate::version::{parse_version, Version, MIN_VERSION};
 use crate::{Error, Result};
 
@@ -36,6 +36,9 @@ pub const DEFAULT_KEYCHAIN_ITEM: &str = "lockset-age-key";
 /// The sops binary a repository runs, by default.
 pub const DEFAULT_SOPS_BIN: &str = "sops";
 
+/// The role that marks the identity which must open every payload.
+pub const ADMIN_ROLE: &str = "admin";
+
 /// A parsed, validated `lockset.toml`.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -48,6 +51,9 @@ pub struct Config {
     pub labels: Labels,
     pub custody: CustodyConfig,
     pub codec: CodecConfig,
+    /// The identity registry: labels, public keys, and roles. Empty in a
+    /// repository that still keeps labels in `.sops.yaml` comments.
+    pub registry: IdentityRegistry,
 }
 
 impl Default for Config {
@@ -60,6 +66,7 @@ impl Default for Config {
             labels: Labels::default(),
             custody: CustodyConfig::default(),
             codec: CodecConfig::default(),
+            registry: IdentityRegistry::default(),
         }
     }
 }
@@ -146,12 +153,110 @@ impl Config {
             labels,
             custody,
             codec,
+            registry: IdentityRegistry::from_raw(&raw.identities)?,
         })
     }
 
     /// Whether this repository names at least one default payload.
     pub fn has_default_payloads(&self) -> bool {
         !self.default_payloads.is_empty()
+    }
+}
+
+/// One identity the repository knows: its label, public key, and roles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    pub label: Label,
+    pub public: PubKey,
+    /// Free-form tags; `admin` marks the identity that must open every payload.
+    pub roles: Vec<Label>,
+}
+
+impl Identity {
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|r| r.as_str() == role)
+    }
+}
+
+/// The configured identity registry. Labels win over `.sops.yaml` comments;
+/// comments are read only as a migration input and for drift reporting.
+#[derive(Debug, Clone, Default)]
+pub struct IdentityRegistry {
+    identities: Vec<Identity>,
+}
+
+impl IdentityRegistry {
+    pub fn new(identities: Vec<Identity>) -> Self {
+        Self { identities }
+    }
+
+    fn from_raw(raw: &[RawIdentity]) -> Result<Self> {
+        let mut identities: Vec<Identity> = Vec::with_capacity(raw.len());
+        for (index, entry) in raw.iter().enumerate() {
+            let label = Label::parse(&entry.label)
+                .map_err(|error| Error::invalid(format!("identities[{index}].label: {error}")))?;
+            let public = PubKey::parse(&entry.public)
+                .map_err(|error| Error::invalid(format!("identities[{index}].public: {error}")))?;
+            if let Some(other) = identities.iter().find(|i| i.label == label) {
+                return Err(Error::invalid(format!(
+                    "identities[{index}].label: '{label}' is already the label of {}",
+                    other.public
+                )));
+            }
+            if let Some(other) = identities.iter().find(|i| i.public == public) {
+                return Err(Error::invalid(format!(
+                    "identities[{index}].public: {public} is already registered as '{}'",
+                    other.label
+                )));
+            }
+            let mut roles: Vec<Label> = Vec::with_capacity(entry.roles.len());
+            for role in &entry.roles {
+                let role = Label::parse(role).map_err(|error| {
+                    Error::invalid(format!("identities[{index}].roles: {error}"))
+                })?;
+                if !roles.contains(&role) {
+                    roles.push(role);
+                }
+            }
+            identities.push(Identity {
+                label,
+                public,
+                roles,
+            });
+        }
+        Ok(Self { identities })
+    }
+
+    pub fn identities(&self) -> &[Identity] {
+        &self.identities
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.identities.is_empty()
+    }
+
+    pub fn label_for(&self, key: &PubKey) -> Option<&Label> {
+        self.identities
+            .iter()
+            .find(|identity| &identity.public == key)
+            .map(|identity| &identity.label)
+    }
+
+    pub fn keys_for_label(&self, label: &Label) -> Vec<&PubKey> {
+        self.identities
+            .iter()
+            .filter(|identity| &identity.label == label)
+            .map(|identity| &identity.public)
+            .collect()
+    }
+
+    /// The keys marked with the `admin` role.
+    pub fn admin_keys(&self) -> Vec<&PubKey> {
+        self.identities
+            .iter()
+            .filter(|identity| identity.has_role(ADMIN_ROLE))
+            .map(|identity| &identity.public)
+            .collect()
     }
 }
 
@@ -345,11 +450,22 @@ struct Raw {
     #[serde(default)]
     repo: RawRepo,
     #[serde(default)]
+    identities: Vec<RawIdentity>,
+    #[serde(default)]
     labels: RawLabels,
     #[serde(default)]
     custody: RawCustody,
     #[serde(default)]
     codec: RawCodec,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawIdentity {
+    label: String,
+    public: String,
+    #[serde(default)]
+    roles: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -495,6 +611,102 @@ payload_globs = ["secrets/*.env", "../outside/*.env"]
 
         assert!(error.to_string().contains("custody.kind"), "{error}");
         assert!(error.to_string().contains("file:<path>"), "{error}");
+    }
+
+    const ADMIN: &str = "age1p243ylp98pr939vj8eqsmaczq8c9gwxwnlupz9pvelpfj6ha0cgqjsue6x";
+    const ALICE: &str = "age1vvq9jvcxj0xw2jl4x0az4ndvg7ew39c2pge0u8scdpwejlyazyjqqcs64q";
+
+    #[test]
+    fn identities_parse_with_labels_keys_and_roles() {
+        let config = Config::parse(&format!(
+            r#"
+[[identities]]
+label = "admin"
+public = "{ADMIN}"
+roles = ["admin", "admin"]
+
+[[identities]]
+label = "dev-alice"
+public = "{ALICE}"
+"#
+        ))
+        .unwrap();
+
+        assert_eq!(config.registry.identities().len(), 2);
+        let admin = &config.registry.identities()[0];
+        assert_eq!(admin.label.as_str(), "admin");
+        assert_eq!(admin.public.as_str(), ADMIN);
+        assert_eq!(admin.roles.len(), 1, "roles are deduped");
+        assert!(admin.has_role("admin"));
+
+        let alice = &config.registry.identities()[1];
+        assert!(alice.roles.is_empty());
+        assert_eq!(
+            config
+                .registry
+                .label_for(&PubKey::parse(ALICE).unwrap())
+                .map(|label| label.as_str()),
+            Some("dev-alice")
+        );
+        assert_eq!(config.registry.admin_keys().len(), 1);
+        assert_eq!(
+            config
+                .registry
+                .keys_for_label(&Label::parse("dev-alice").unwrap())
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_duplicate_label_or_key_is_refused_by_name() {
+        let duplicate_label = Config::parse(&format!(
+            "[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\n[[identities]]\nlabel = \"admin\"\npublic = \"{ALICE}\"\n"
+        ))
+        .unwrap_err();
+        assert!(
+            duplicate_label
+                .to_string()
+                .contains("identities[1].label: 'admin' is already the label"),
+            "{duplicate_label}"
+        );
+
+        let duplicate_key = Config::parse(&format!(
+            "[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\n[[identities]]\nlabel = \"dev-alice\"\npublic = \"{ADMIN}\"\n"
+        ))
+        .unwrap_err();
+        assert!(
+            duplicate_key.to_string().contains("identities[1].public"),
+            "{duplicate_key}"
+        );
+    }
+
+    #[test]
+    fn an_identity_field_error_names_the_entry() {
+        let bad_key = Config::parse("[[identities]]\nlabel = \"admin\"\npublic = \"not-a-key\"\n")
+            .unwrap_err();
+        assert!(
+            bad_key.to_string().contains("identities[0].public"),
+            "{bad_key}"
+        );
+
+        let bad_label = Config::parse(&format!(
+            "[[identities]]\nlabel = \"Admin\"\npublic = \"{ADMIN}\"\n"
+        ))
+        .unwrap_err();
+        assert!(
+            bad_label.to_string().contains("identities[0].label"),
+            "{bad_label}"
+        );
+
+        let bad_role = Config::parse(&format!(
+            "[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\nroles = [\"Not A Role\"]\n"
+        ))
+        .unwrap_err();
+        assert!(
+            bad_role.to_string().contains("identities[0].roles"),
+            "{bad_role}"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+use crate::config::IdentityRegistry;
 use crate::meta::PayloadMeta;
 use crate::model::{CustodyKind, Label, PathId, PubKey};
 use crate::sopsfile::SopsFile;
@@ -41,6 +42,9 @@ pub struct Snapshot {
     pub digests: BTreeMap<PathId, String>,
     /// Payloads that could not be read or parsed, with the reason.
     pub payload_errors: Vec<PayloadError>,
+    /// The configured identity registry. When it is not empty, its labels win
+    /// over `.sops.yaml` comments, which become a migration input.
+    pub registry: IdentityRegistry,
 }
 
 impl Snapshot {
@@ -60,7 +64,14 @@ impl Snapshot {
             identity_error: None,
             digests: BTreeMap::new(),
             payload_errors: Vec::new(),
+            registry: IdentityRegistry::default(),
         }
+    }
+
+    /// Attach the identity registry from `lockset.toml`.
+    pub fn with_registry(mut self, registry: IdentityRegistry) -> Self {
+        self.registry = registry;
+        self
     }
 
     /// Record the sops config file this snapshot came from.
@@ -92,8 +103,12 @@ impl Snapshot {
         self
     }
 
+    /// The label of `key`: the registry first, then a comment as fallback.
     pub fn label_for(&self, key: &PubKey) -> Option<Label> {
-        self.sops.rules().iter().find_map(|r| r.label_of(key))
+        self.registry
+            .label_for(key)
+            .cloned()
+            .or_else(|| self.sops.rules().iter().find_map(|r| r.label_of(key)))
     }
 
     pub fn payloads_with(&self, key: &PubKey) -> Vec<&PayloadMeta> {
@@ -108,9 +123,59 @@ impl Snapshot {
         self.payloads.iter().find(|p| &p.id == id)
     }
 
-    /// Label -> key -> payloads that carry it, in `.sops.yaml` order.
+    /// Label -> key -> payloads that carry it: the registry in config order,
+    /// then any comment label the registry does not cover, in `.sops.yaml`
+    /// order. The config wins, so a conflict appears once, with its label.
     pub fn labels(&self) -> Vec<(Label, PubKey, Vec<PathId>)> {
-        let mut out: Vec<(Label, PubKey, Vec<PathId>)> = Vec::new();
+        let payloads_for = |key: &PubKey| -> Vec<PathId> {
+            self.payloads
+                .iter()
+                .filter(|p| p.has(key))
+                .map(|p| p.id.clone())
+                .collect()
+        };
+        let mut out: Vec<(Label, PubKey, Vec<PathId>)> = self
+            .registry
+            .identities()
+            .iter()
+            .map(|identity| {
+                (
+                    identity.label.clone(),
+                    identity.public.clone(),
+                    payloads_for(&identity.public),
+                )
+            })
+            .collect();
+        if !self.registry.is_empty() {
+            // Comment labels are migration input: show only the keys the
+            // registry does not know, so a conflict is not listed twice.
+            for rule in self.sops.rules() {
+                for recipient in &rule.recipients {
+                    let Some(label) = recipient.label.clone() else {
+                        continue;
+                    };
+                    if self.registry.label_for(&recipient.key).is_some() {
+                        continue;
+                    }
+                    match out
+                        .iter_mut()
+                        .find(|(l, k, _)| l == &label && k == &recipient.key)
+                    {
+                        Some((_, _, existing)) => {
+                            for id in payloads_for(&recipient.key) {
+                                if !existing.contains(&id) {
+                                    existing.push(id);
+                                }
+                            }
+                        }
+                        None => {
+                            out.push((label, recipient.key.clone(), payloads_for(&recipient.key)))
+                        }
+                    }
+                }
+            }
+            return out;
+        }
         for rule in self.sops.rules() {
             for recipient in &rule.recipients {
                 let Some(label) = recipient.label.clone() else {
@@ -144,6 +209,26 @@ impl Snapshot {
     /// recipients. Both are reported, never repaired here.
     pub fn drift(&self) -> Vec<String> {
         let mut notes = self.sops.drift();
+        if !self.registry.is_empty() {
+            for rule in self.sops.rules() {
+                for recipient in &rule.recipients {
+                    let Some(comment) = recipient.label.as_ref() else {
+                        continue;
+                    };
+                    match self.registry.label_for(&recipient.key) {
+                        Some(label) if label != comment => notes.push(format!(
+                            "{}: lockset.toml labels it {label}, but the .sops.yaml comment says {comment}",
+                            recipient.key
+                        )),
+                        Some(_) => {}
+                        None => notes.push(format!(
+                            "{}: the .sops.yaml comment labels it {comment}, but lockset.toml has no identity for it",
+                            recipient.key
+                        )),
+                    }
+                }
+            }
+        }
         for payload in &self.payloads {
             match self.sops.rule_indexes_for(payload.id.as_str()) {
                 Ok(indexes) if indexes.is_empty() => notes.push(format!(

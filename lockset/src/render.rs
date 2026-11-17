@@ -186,6 +186,33 @@ pub fn plan(plan: &Plan, dry_run: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// A `lockset.toml` fragment listing the identities the `.sops.yaml` comments
+/// currently name: the one-time conversion the README documents. Comment
+/// labels are migration input, so nothing here is written for the user.
+pub fn identities_toml(snapshot: &lockset_core::Snapshot) -> String {
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    for rule in snapshot.sops.rules() {
+        for recipient in &rule.recipients {
+            let Some(label) = recipient.label.as_ref() else {
+                continue;
+            };
+            let pair = (label.as_str(), recipient.key.as_str());
+            if !pairs.contains(&pair) {
+                pairs.push(pair);
+            }
+        }
+    }
+    pairs.sort_unstable();
+    let mut out =
+        String::from("# Append this to lockset.toml: labels taken from the .sops.yaml comments.\n");
+    for (label, key) in pairs {
+        out.push_str(&format!(
+            "\n[[identities]]\nlabel = \"{label}\"\npublic = \"{key}\"\n"
+        ));
+    }
+    out
+}
+
 /// The requested serialization of the merged payload values. The values are
 /// secret material: they appear here by design, escaped so the format stays
 /// valid, and nowhere else.

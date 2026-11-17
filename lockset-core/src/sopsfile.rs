@@ -13,6 +13,43 @@ pub struct Recipient {
     pub label: Option<Label>,
 }
 
+/// The trailing comment on an `age:` line. `labels` is set only when the whole
+/// comment is a comma-separated label list, so rewriting may regenerate it; any
+/// other comment is free text and is preserved byte-for-byte, because a hand
+/// edit or another tool put it there.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Comment {
+    pub raw: String,
+    pub labels: Option<Vec<Label>>,
+}
+
+impl Comment {
+    fn parse(text: &str) -> Self {
+        let raw = text.trim().to_owned();
+        if raw.is_empty() {
+            return Self::default();
+        }
+        let mut labels = Vec::new();
+        for token in raw.split(',') {
+            match Label::parse(token.trim()) {
+                Ok(label) => labels.push(label),
+                Err(_) => return Self { raw, labels: None },
+            }
+        }
+        Self {
+            raw,
+            labels: Some(labels),
+        }
+    }
+
+    /// The label at `index`, when the comment is a label list.
+    fn label_at(&self, index: usize) -> Option<Label> {
+        self.labels
+            .as_ref()
+            .and_then(|labels| labels.get(index).cloned())
+    }
+}
+
 /// The recipient backend a rule declares. Lockset reads and rewrites `age:`
 /// lines only; another backend is parsed and reported so a mixed repository
 /// works, and refused only when a mutation targets that rule.
@@ -32,6 +69,8 @@ pub struct Rule {
     pub path_regex: String,
     pub recipients: Vec<Recipient>,
     pub kind: RuleKind,
+    /// The trailing comment, kept so a rewrite never loses free text.
+    pub comment: Comment,
     /// Byte range of the whole `age:` line, newline included when present.
     /// Rewriting uses it to touch nothing else in the file.
     pub age_span: Option<Range<usize>>,
@@ -96,6 +135,7 @@ impl SopsFile {
                     path_regex: re.to_owned(),
                     recipients: Vec::new(),
                     kind: RuleKind::None,
+                    comment: Comment::default(),
                     age_span: None,
                     indent: String::new(),
                 });
@@ -135,22 +175,18 @@ impl SopsFile {
                     rule.path_regex
                 )));
             }
-            let labels: Vec<&str> = comment
-                .map(|c| {
-                    c.split(',')
-                        .map(str::trim)
-                        .filter(|l| !l.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default();
+            let comment = comment.map(Comment::parse).unwrap_or_default();
             let mut recipients = Vec::with_capacity(keys.len());
             for (i, key) in keys.iter().enumerate() {
                 let key = PubKey::parse(key)?;
                 // A label that does not parse is drift, not a parse failure.
-                let label = labels.get(i).and_then(|l| Label::parse(l).ok());
-                recipients.push(Recipient { key, label });
+                recipients.push(Recipient {
+                    key,
+                    label: comment.label_at(i),
+                });
             }
             rule.recipients = recipients;
+            rule.comment = comment;
             rule.kind = RuleKind::Age;
             rule.age_span = Some(start..offset);
         }
@@ -228,21 +264,11 @@ impl SopsFile {
             };
             out.push_str(&self.text[pos..span.start]);
             let keys: Vec<&str> = set.iter().map(|r| r.key.as_str()).collect();
-            let labelled = set.iter().all(|r| r.label.is_some());
-            let comment = if labelled && !set.is_empty() {
-                let labels: Vec<String> = set
-                    .iter()
-                    .filter_map(|r| r.label.as_ref().map(|l| l.to_string()))
-                    .collect();
-                format!(" # {}", labels.join(","))
-            } else {
-                String::new()
-            };
             out.push_str(&format!(
                 "{}age: {}{}",
                 rule.indent,
                 keys.join(","),
-                comment
+                Self::rendered_comment_text(rule, set)
             ));
             // Keep the line ending the file already uses: a CRLF map must not
             // end up with mixed endings.
@@ -256,6 +282,43 @@ impl SopsFile {
         }
         out.push_str(&self.text[pos..]);
         Ok(out)
+    }
+
+    /// The comment a rewrite writes: free text is preserved verbatim; a label
+    /// list is regenerated only when every key has a label (the set's, else the
+    /// rule's original), so a partial list is never silently dropped or
+    /// misaligned.
+    fn rendered_comment_text(rule: &Rule, set: &[Recipient]) -> String {
+        if rule.comment.labels.is_none() && !rule.comment.raw.is_empty() {
+            return format!(" # {}", rule.comment.raw);
+        }
+        let mut labels: Vec<Label> = Vec::with_capacity(set.len());
+        for recipient in set {
+            let label = recipient.label.clone().or_else(|| {
+                rule.recipients
+                    .iter()
+                    .find(|old| old.key == recipient.key)
+                    .and_then(|old| old.label.clone())
+            });
+            let Some(label) = label else {
+                // Keep whatever the line said rather than lose or shift labels.
+                return if rule.comment.raw.is_empty() {
+                    String::new()
+                } else {
+                    format!(" # {}", rule.comment.raw)
+                };
+            };
+            labels.push(label);
+        }
+        if labels.is_empty() {
+            return String::new();
+        }
+        let joined = labels
+            .iter()
+            .map(|label| label.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(" # {joined}")
     }
 
     /// Labels that name more than one key, or keys with no label.
@@ -388,6 +451,68 @@ mod tests {
         assert!(out.contains(C), "{out}");
         let again = SopsFile::parse(&out).unwrap();
         assert_eq!(again.rules()[0].recipients.len(), 3);
+    }
+
+    #[test]
+    fn a_free_text_comment_survives_a_rewrite() {
+        let text = format!(
+            "creation_rules:\n- path_regex: secrets/.*\\.env$\n  age: {A},{B} # admin,recovery (managed by terraform)\n"
+        );
+        let file = SopsFile::parse(&text).unwrap();
+        assert_eq!(file.rules()[0].comment.labels, None);
+        let mut sets: Vec<Vec<Recipient>> =
+            file.rules().iter().map(|r| r.recipients.clone()).collect();
+        sets[0].push(Recipient {
+            key: PubKey::parse(C).unwrap(),
+            label: Some(Label::parse("dev-alice").unwrap()),
+        });
+
+        let out = file.render_with(&sets).unwrap();
+
+        assert!(
+            out.contains(" # admin,recovery (managed by terraform)\n"),
+            "free text must survive: {out}"
+        );
+        assert!(out.contains(C), "{out}");
+        assert!(SopsFile::parse(&out).is_ok());
+    }
+
+    #[test]
+    fn a_label_only_comment_is_regenerated() {
+        let file = SopsFile::parse(&fixture()).unwrap();
+        assert!(file.rules()[0].comment.labels.is_some());
+        let mut sets: Vec<Vec<Recipient>> =
+            file.rules().iter().map(|r| r.recipients.clone()).collect();
+        sets[0].retain(|r| r.key.as_str() != B);
+
+        let out = file.render_with(&sets).unwrap();
+
+        let first = out
+            .lines()
+            .find(|line| line.starts_with("  age: ") && !line.contains(B))
+            .unwrap_or_default();
+        assert_eq!(first, format!("  age: {A},{C} # admin,ci"), "{out}");
+        assert!(!first.contains("recovery"), "{out}");
+    }
+
+    #[test]
+    fn a_partial_label_list_is_kept_rather_than_misaligned() {
+        let text =
+            format!("creation_rules:\n- path_regex: secrets/.*\\.env$\n  age: {A},{B} # admin\n");
+        let file = SopsFile::parse(&text).unwrap();
+        let mut sets: Vec<Vec<Recipient>> =
+            file.rules().iter().map(|r| r.recipients.clone()).collect();
+        sets[0].push(Recipient {
+            key: PubKey::parse(C).unwrap(),
+            label: None,
+        });
+
+        let out = file.render_with(&sets).unwrap();
+
+        assert!(
+            out.contains(" # admin\n"),
+            "the partial list stays as it was: {out}"
+        );
     }
 
     #[test]

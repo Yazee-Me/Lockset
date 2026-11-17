@@ -220,9 +220,9 @@ fn a_value_file_that_cannot_be_read_is_an_error() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // No identity is configured, so custody fails first; the point is that the
-    // command changes nothing.
-    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    // An unreadable source is a usage error, and nothing is written.
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("cannot read"), "{stderr}");
     assert_eq!(repo.read("secrets/dev.env"), "TOKEN=old\n");
 }
 

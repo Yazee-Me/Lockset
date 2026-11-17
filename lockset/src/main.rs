@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::Parser;
 use lockset_core::ops::{self, GrantRequest, RevokeRequest, RevokeTarget};
 use lockset_core::{
@@ -38,7 +38,7 @@ fn json_requested(cli: &Cli) -> Result<bool> {
         return Ok(false);
     }
     match &cli.command {
-        Command::Status | Command::Who | Command::Check => Ok(true),
+        Command::Status { .. } | Command::Who | Command::Check => Ok(true),
         Command::Run { .. } => Err(usage::error(
             "--json prints plans and reports; run has no JSON output",
         )),
@@ -64,12 +64,22 @@ fn run() -> Result<u8> {
     let _lock = wiring::mutation_lock(&cli, &context)?;
 
     match &cli.command {
-        Command::Status => {
+        Command::Status { strict } => {
             let report = StatusReport::new(&wiring::snapshot(&context)?);
             if cli.json {
                 println!("{}", render::json(&report)?);
             } else {
                 println!("{}", render::status(&report));
+            }
+            if *strict {
+                let findings = report.strict_findings();
+                if !findings.is_empty() {
+                    eprintln!("strict: {} finding(s)", findings.len());
+                    for finding in &findings {
+                        eprintln!("  {finding}");
+                    }
+                    return Ok(1);
+                }
             }
             Ok(0)
         }
@@ -135,21 +145,17 @@ fn check(context: &wiring::Context, cli: &Cli) -> Result<u8> {
     let snapshot = wiring::snapshot(context)?;
     let mut results = ops::checks(&snapshot);
 
+    // A label is a name, not a permission: whatever identity this machine has
+    // gets a decrypt proof for every payload it is a recipient of.
     if let Some(identity) = &snapshot.identity {
-        let is_admin = identity
-            .label
-            .as_ref()
-            .is_some_and(|label| label.as_str() == "admin");
-        if is_admin {
-            let key = context.require_key()?;
-            for payload in snapshot.payloads_with(&identity.public) {
-                if let Err(error) = context.codec.decrypt(&payload.id, &key) {
-                    results.push(Check {
-                        name: format!("decrypts: {}", payload.id),
-                        ok: false,
-                        detail: error.to_string(),
-                    });
-                }
+        let key = context.require_key()?;
+        for payload in snapshot.payloads_with(&identity.public) {
+            if let Err(error) = context.codec.decrypt(&payload.id, &key) {
+                results.push(Check {
+                    name: format!("decrypts: {}", payload.id),
+                    ok: false,
+                    detail: error.to_string(),
+                });
             }
         }
     }
@@ -185,7 +191,7 @@ fn run_command(
 
     let (program, rest) = argv
         .split_first()
-        .ok_or_else(|| anyhow::anyhow!("run needs a command after --"))?;
+        .ok_or_else(|| usage::error("run needs a command after --"))?;
     let status = child_command(program, rest, envs, pass_custody, std::env::vars_os()).status()?;
     Ok(status.code().unwrap_or(1) as u8)
 }
@@ -203,10 +209,10 @@ fn exported_payload(
             .map(|(name, _)| name)
             .find(|name| lockset_tools::env::is_reserved(name))
         {
-            bail!(
+            return Err(usage::error(format!(
                 "payload variable {name} is an identity or sops variable; \
                  run keeps those out of the child (--pass-custody exports it deliberately)"
-            );
+            )));
         }
     }
     Ok(envs)
@@ -249,15 +255,17 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
 
             if let Some(label) = &label {
                 if label.is_offmachine() {
-                    bail!("{label} identities are never installed on a machine");
+                    return Err(usage::error(format!(
+                        "{label} identities are never installed on a machine"
+                    )));
                 }
             }
             if let Some(existing) = context.custody.get()? {
                 let existing_public = existing.public()?;
                 if existing_public != public && !*force {
-                    bail!(
+                    return Err(anyhow::Error::new(lockset_core::Error::custody(format!(
                         "custody already holds a different identity ({existing_public}); pass --force to replace it"
-                    );
+                    ))));
                 }
             }
 
@@ -295,10 +303,10 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
             }
             for payload in &covered {
                 context.codec.decrypt(&payload.id, &key).map_err(|error| {
-                    anyhow::anyhow!(
+                    anyhow::Error::new(lockset_core::Error::tool(format!(
                         "the key was stored, but it cannot open {}: {error}",
                         payload.id
-                    )
+                    )))
                 })?;
             }
             println!(
@@ -337,7 +345,7 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
         KeyCommand::Forget { yes } => {
             if !*yes && !cli.dry_run {
                 if !std::io::stdin().is_terminal() {
-                    bail!("refusing to remove the key without --yes");
+                    return Err(usage::error("refusing to remove the key without --yes"));
                 }
                 if !input::confirm("remove the key from custody?")? {
                     println!("kept");
@@ -352,10 +360,9 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
                 render::plan(&plan, true, cli.json)?;
                 return Ok(0);
             }
-            let key = context
-                .custody
-                .get()?
-                .ok_or_else(|| anyhow::anyhow!("no key in custody"))?;
+            let key = context.custody.get()?.ok_or_else(|| {
+                anyhow::Error::new(lockset_core::Error::custody("no key in custody"))
+            })?;
             exec::apply(
                 &plan,
                 &context.repo,
@@ -377,15 +384,18 @@ fn set(
     source: &input::ValueSource<'_>,
 ) -> Result<u8> {
     if !lockset_core::meta::is_name(name) {
-        bail!("invalid key name: {name}");
+        return Err(usage::error(format!("invalid key name: {name}")));
     }
     let id = payload_id(payload)?;
     let snapshot = wiring::snapshot(context)?;
     if snapshot.payload(&id).is_none() {
         if let Some(error) = snapshot.payload_error(&id) {
-            bail!("cannot use {}: {}", error.id, error.error);
+            return Err(usage::error(format!(
+                "cannot use {}: {}",
+                error.id, error.error
+            )));
         }
-        bail!("no such payload: {payload}");
+        return Err(usage::error(format!("no such payload: {payload}")));
     }
     let value = input::read_value(source)?;
 
@@ -415,7 +425,9 @@ fn set(
 
 fn rotate(context: &wiring::Context, cli: &Cli, all: bool, payload: &[String]) -> Result<u8> {
     if !all && payload.is_empty() {
-        bail!("rotating a data key rewrites every value; pass --all or explicit --payload");
+        return Err(usage::error(
+            "rotating a data key rewrites every value; pass --all or explicit --payload",
+        ));
     }
     let ids: Option<Vec<PathId>> = if all {
         None
@@ -441,7 +453,9 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
         } => {
             let label = Label::parse(label)?;
             if label.is_reserved() {
-                bail!("{label} is a reserved label; use grant/revoke for estate identities");
+                return Err(usage::error(format!(
+                    "{label} is a reserved label; use grant/revoke for estate identities"
+                )));
             }
             let public = PubKey::parse(public)?;
             let only = match only.as_deref() {
@@ -502,7 +516,9 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
         } => {
             let label = Label::parse(label)?;
             if label.is_reserved() {
-                bail!("{label} is a reserved label; use revoke --label {label}");
+                return Err(usage::error(format!(
+                    "{label} is a reserved label; use revoke --label {label}"
+                )));
             }
             let snapshot = wiring::snapshot(context)?;
             let plan = ops::revoke(
@@ -550,7 +566,7 @@ fn revoke(
     let target = match (public, label) {
         (Some(public), None) => RevokeTarget::Key(PubKey::parse(public)?),
         (None, Some(label)) => RevokeTarget::Label(Label::parse(label)?),
-        _ => bail!("pass either a public key or --label"),
+        _ => return Err(usage::error("pass either a public key or --label")),
     };
     let request = RevokeRequest {
         target,

@@ -48,6 +48,31 @@ impl StatusReport {
     }
 }
 
+impl StatusReport {
+    /// What `status --strict` refuses to accept: a missing identity, unreadable
+    /// payloads, drift, or empty values. Each entry names the finding, so a
+    /// pipeline can gate on the exit code without parsing the table.
+    pub fn strict_findings(&self) -> Vec<String> {
+        let mut findings = Vec::new();
+        if self.identity.is_none() {
+            findings.push(match &self.identity_error {
+                Some(error) => format!("identity: unavailable — {error}"),
+                None => "identity: none".to_owned(),
+            });
+        }
+        for error in &self.payload_errors {
+            findings.push(format!("unreadable: {}: {}", error.id, error.error));
+        }
+        for note in &self.drift {
+            findings.push(format!("drift: {note}"));
+        }
+        if self.empty_values > 0 {
+            findings.push(format!("empty values: {}", self.empty_values));
+        }
+        findings
+    }
+}
+
 /// What the local identity can open.
 #[derive(Debug, Clone, Serialize)]
 pub struct Coverage {
@@ -191,4 +216,75 @@ pub fn next_step(snapshot: &Snapshot) -> String {
         return "next: lockset set <KEY> --payload secrets/prod/infra.env".into();
     }
     "ready".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{CustodyKind, PubKey};
+    use crate::snapshot::PayloadError;
+
+    fn report() -> StatusReport {
+        StatusReport {
+            schema_version: SCHEMA_VERSION,
+            root: ".".into(),
+            identity: None,
+            identity_error: None,
+            coverage: None,
+            payloads: Vec::new(),
+            payload_errors: vec![PayloadError {
+                id: PathId::parse("secrets/bad.env").unwrap(),
+                error: "boom".into(),
+            }],
+            identities: Vec::new(),
+            drift: vec!["secrets/a.env: drift".into()],
+            empty_values: 2,
+            next: "next: lockset key import".into(),
+        }
+    }
+
+    #[test]
+    fn strict_findings_name_every_failure_class() {
+        let findings = report().strict_findings();
+
+        assert_eq!(findings.len(), 4, "{findings:?}");
+        assert!(findings[0].contains("identity: none"), "{findings:?}");
+        assert!(
+            findings[1].contains("unreadable: secrets/bad.env: boom"),
+            "{findings:?}"
+        );
+        assert!(
+            findings[2].contains("drift: secrets/a.env: drift"),
+            "{findings:?}"
+        );
+        assert!(findings[3].contains("empty values: 2"), "{findings:?}");
+    }
+
+    #[test]
+    fn a_clean_report_has_no_strict_findings() {
+        let mut clean = report();
+        clean.identity = Some(IdentityView {
+            public: PubKey::parse("age1p243ylp98pr939vj8eqsmaczq8c9gwxwnlupz9pvelpfj6ha0cgqjsue6x")
+                .unwrap(),
+            custody: CustodyKind::Memory,
+            label: None,
+        });
+        clean.payload_errors.clear();
+        clean.drift.clear();
+        clean.empty_values = 0;
+
+        assert!(clean.strict_findings().is_empty());
+    }
+
+    #[test]
+    fn an_unavailable_identity_is_a_strict_finding() {
+        let mut report = report();
+        report.identity_error = Some("keyring unavailable".into());
+
+        let findings = report.strict_findings();
+        assert!(
+            findings[0].contains("identity: unavailable — keyring unavailable"),
+            "{findings:?}"
+        );
+    }
 }

@@ -97,6 +97,26 @@ lockset check  --json | jq -e 'all(.checks[]; .ok)'
 lockset --dry-run --json grant age1... --label dev-alice
 ```
 
+## Exit codes
+
+Pipelines can gate on the exit code; `lockset --help` prints the same table.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | ok |
+| 1 | findings: a failed `check`, a `status --strict` finding, or a runtime failure |
+| 2 | usage or configuration: bad argument, no `.sops.yaml`, unsupported payload format |
+| 3 | custody or authentication: no identity, keychain or file custody failure |
+| 4 | external tool: `sops` missing or failing |
+| 5 | conflict or lock: an input changed, another process holds the repository |
+| 6 | partial apply: a mutation could not be undone; the message names the files |
+
+`status --strict` exits 1 on drift, empty values, a missing identity, or
+unreadable payloads; without `--strict` it always reports and exits 0. `check`
+covers identity presence, unreadable payloads, ciphertext, plaintext, empty
+values, label drift, admin coverage, and a decrypt proof for whatever identity
+this machine has — no particular label is required.
+
 ## Design notes
 
 - `lockset-core` never spawns a process, reads the environment, or touches the

@@ -116,7 +116,8 @@ fn a_bad_payload_does_not_block_an_unrelated_operation() {
         Some("v"),
     );
     let stderr = String::from_utf8_lossy(&set_bad.stderr);
-    assert_eq!(set_bad.status.code(), Some(1), "{stderr}");
+    // A payload that cannot be parsed is a config error for a targeted command.
+    assert_eq!(set_bad.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("cannot use secrets/bad.env"), "{stderr}");
     assert!(stderr.contains("not an age public key"), "{stderr}");
 }

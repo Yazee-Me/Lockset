@@ -106,7 +106,8 @@ fn set_rejects_an_unsupported_payload() {
         Some("v"),
     );
     let stderr = String::from_utf8_lossy(&bad.stderr);
-    assert_eq!(bad.status.code(), Some(1), "{stderr}");
+    // An unsupported payload format is a config error.
+    assert_eq!(bad.status.code(), Some(2), "{stderr}");
     assert!(
         stderr.contains("cannot use secrets/config.yaml"),
         "{stderr}"

@@ -44,7 +44,7 @@ impl SopsCodec {
     fn run(&self, args: &[&str], key: &SecretKey) -> Result<Output> {
         self.command(args, key, std::env::vars_os())
             .output()
-            .map_err(|e| Error::failed(format!("cannot run {}: {e}", self.bin)))
+            .map_err(|e| Error::tool(format!("cannot run {}: {e}", self.bin)))
     }
 
     fn ok(&self, output: &Output, what: &str) -> Result<()> {
@@ -52,7 +52,7 @@ impl SopsCodec {
             return Ok(());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(Error::failed(format!(
+        Err(Error::tool(format!(
             "sops {what} failed: {}",
             stderr.trim().lines().next().unwrap_or("no output")
         )))
@@ -89,7 +89,7 @@ impl Codec for SopsCodec {
         use std::process::Stdio;
 
         let json = serde_json::to_string(value)
-            .map_err(|e| Error::failed(format!("cannot encode the value: {e}")))?;
+            .map_err(|e| Error::tool(format!("cannot encode the value: {e}")))?;
         let selector = format!("[\"{name}\"]");
 
         let mut child = self
@@ -102,18 +102,18 @@ impl Codec for SopsCodec {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| Error::failed(format!("cannot run {}: {e}", self.bin)))?;
+            .map_err(|e| Error::tool(format!("cannot run {}: {e}", self.bin)))?;
 
         child
             .stdin
             .take()
-            .ok_or_else(|| Error::failed("sops set: no stdin"))?
+            .ok_or_else(|| Error::tool("sops set: no stdin"))?
             .write_all(json.as_bytes())
-            .map_err(|e| Error::failed(format!("cannot feed the value to sops: {e}")))?;
+            .map_err(|e| Error::tool(format!("cannot feed the value to sops: {e}")))?;
 
         let output = child
             .wait_with_output()
-            .map_err(|e| Error::failed(format!("sops set failed: {e}")))?;
+            .map_err(|e| Error::tool(format!("sops set failed: {e}")))?;
         self.ok(&output, &format!("set {name} in {id}"))?;
 
         // Prove the value landed and that the rest of the file still opens.
@@ -123,7 +123,7 @@ impl Codec for SopsCodec {
             .iter()
             .any(|(n, v)| n == name && v == value);
         if !landed {
-            return Err(Error::failed(format!(
+            return Err(Error::tool(format!(
                 "sops set reported success, but {name} reads back differently"
             )));
         }

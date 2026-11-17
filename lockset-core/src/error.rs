@@ -14,6 +14,12 @@ pub enum Error {
     /// written and the command can be retried.
     #[error("{0}")]
     Conflict(String),
+    /// There is no usable identity, or the custody store failed or refused.
+    #[error("{0}")]
+    Custody(String),
+    /// An external tool (sops) failed.
+    #[error("{0}")]
+    Tool(String),
 }
 
 impl Error {
@@ -31,6 +37,12 @@ impl Error {
     }
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self::Conflict(msg.into())
+    }
+    pub fn custody(msg: impl Into<String>) -> Self {
+        Self::Custody(msg.into())
+    }
+    pub fn tool(msg: impl Into<String>) -> Self {
+        Self::Tool(msg.into())
     }
 }
 

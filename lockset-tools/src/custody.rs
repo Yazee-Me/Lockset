@@ -24,14 +24,14 @@ impl Custody for EnvCustody {
     }
 
     fn set(&self, _key: &SecretKey) -> Result<()> {
-        Err(Error::refused(format!(
+        Err(Error::custody(format!(
             "{} is read-only here; set it in the parent environment",
             self.var
         )))
     }
 
     fn forget(&self) -> Result<()> {
-        Err(Error::refused(format!(
+        Err(Error::custody(format!(
             "{} is not owned by lockset; unset it yourself",
             self.var
         )))
@@ -53,14 +53,14 @@ impl Custody for UnconfiguredCustody {
     }
 
     fn set(&self, _key: &SecretKey) -> Result<()> {
-        Err(Error::refused(
+        Err(Error::custody(
             "no identity source is configured for a non-interactive run; \
              set LOCKSET_AGE_KEY or pass --custody file:<path>",
         ))
     }
 
     fn forget(&self) -> Result<()> {
-        Err(Error::refused(
+        Err(Error::custody(
             "there is nothing to forget: no identity source is configured for a \
              non-interactive run; pass --custody keyring or --custody file:<path>",
         ))
@@ -90,13 +90,13 @@ impl FileCustody {
         }
         let root = repo_root.into();
         let root = root.canonicalize().map_err(|e| {
-            Error::failed(format!(
+            Error::custody(format!(
                 "cannot resolve the repository {}: {e}",
                 root.display()
             ))
         })?;
         if resolve(&path)?.starts_with(&root) {
-            return Err(Error::refused(format!(
+            return Err(Error::custody(format!(
                 "refusing to keep the key at {}: it is inside the repository; \
                  mount it outside (an absolute path) or use --custody env",
                 path.display()
@@ -106,7 +106,7 @@ impl FileCustody {
             Ok(meta) => regular_file(&path, &meta)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(Error::failed(format!(
+                return Err(Error::custody(format!(
                     "cannot inspect {}: {e}",
                     path.display()
                 )))
@@ -122,7 +122,7 @@ impl Custody for FileCustody {
             Ok(meta) => meta,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => {
-                return Err(Error::failed(format!(
+                return Err(Error::custody(format!(
                     "cannot inspect {}: {e}",
                     self.path.display()
                 )))
@@ -131,7 +131,7 @@ impl Custody for FileCustody {
         regular_file(&self.path, &meta)?;
         owner_only(&self.path, &meta)?;
         let text = std::fs::read_to_string(&self.path)
-            .map_err(|e| Error::failed(format!("cannot read {}: {e}", self.path.display())))?;
+            .map_err(|e| Error::custody(format!("cannot read {}: {e}", self.path.display())))?;
         Ok(Some(SecretKey::from_text(&text)?))
     }
 
@@ -147,7 +147,7 @@ impl Custody for FileCustody {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(Error::failed(format!(
+                return Err(Error::custody(format!(
                     "cannot inspect {}: {e}",
                     self.path.display()
                 )))
@@ -155,7 +155,7 @@ impl Custody for FileCustody {
         }
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| Error::failed(format!("cannot create {}: {e}", parent.display())))?;
+                .map_err(|e| Error::custody(format!("cannot create {}: {e}", parent.display())))?;
         }
 
         let mut options = std::fs::OpenOptions::new();
@@ -169,13 +169,15 @@ impl Custody for FileCustody {
         }
         let mut file = options
             .open(&self.path)
-            .map_err(|e| Error::failed(format!("cannot open {}: {e}", self.path.display())))?;
+            .map_err(|e| Error::custody(format!("cannot open {}: {e}", self.path.display())))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = file
                 .metadata()
-                .map_err(|e| Error::failed(format!("cannot inspect {}: {e}", self.path.display())))?
+                .map_err(|e| {
+                    Error::custody(format!("cannot inspect {}: {e}", self.path.display()))
+                })?
                 .permissions()
                 .mode()
                 & 0o777;
@@ -183,11 +185,11 @@ impl Custody for FileCustody {
             // own mode; tighten the handle before any secret reaches it.
             if mode & 0o077 != 0 {
                 file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| Error::failed(format!("cannot chmod 600 the key file: {e}")))?;
+                    .map_err(|e| Error::custody(format!("cannot chmod 600 the key file: {e}")))?;
             }
         }
         file.write_all(format!("{}\n", key.expose()).as_bytes())
-            .map_err(|e| Error::failed(format!("cannot write {}: {e}", self.path.display())))?;
+            .map_err(|e| Error::custody(format!("cannot write {}: {e}", self.path.display())))?;
         Ok(())
     }
 
@@ -195,7 +197,7 @@ impl Custody for FileCustody {
         match std::fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(Error::failed(format!(
+            Err(e) => Err(Error::custody(format!(
                 "cannot remove {}: {e}",
                 self.path.display()
             ))),
@@ -250,7 +252,7 @@ fn resolve(path: &std::path::Path) -> Result<PathBuf> {
         path.to_path_buf()
     } else {
         std::env::current_dir()
-            .map_err(|e| Error::failed(format!("cannot resolve the current directory: {e}")))?
+            .map_err(|e| Error::custody(format!("cannot resolve the current directory: {e}")))?
             .join(path)
     };
     let mut existing = absolute;
@@ -258,7 +260,7 @@ fn resolve(path: &std::path::Path) -> Result<PathBuf> {
     loop {
         if existing.exists() {
             let mut resolved = existing.canonicalize().map_err(|e| {
-                Error::failed(format!("cannot resolve {}: {e}", existing.display()))
+                Error::custody(format!("cannot resolve {}: {e}", existing.display()))
             })?;
             for part in tail.iter().rev() {
                 resolved.push(part);
@@ -285,13 +287,13 @@ fn resolve(path: &std::path::Path) -> Result<PathBuf> {
 /// diverge, and a directory or FIFO is not an identity.
 fn regular_file(path: &std::path::Path, meta: &std::fs::Metadata) -> Result<()> {
     if meta.file_type().is_symlink() {
-        return Err(Error::refused(format!(
+        return Err(Error::custody(format!(
             "refusing the key at {}: it is a symlink; point --custody file: at the file itself",
             path.display()
         )));
     }
     if !meta.file_type().is_file() {
-        return Err(Error::refused(format!(
+        return Err(Error::custody(format!(
             "refusing the key at {}: it is not a regular file",
             path.display()
         )));
@@ -306,7 +308,7 @@ fn owner_only(path: &std::path::Path, meta: &std::fs::Metadata) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let mode = meta.permissions().mode() & 0o777;
         if mode & 0o077 != 0 {
-            return Err(Error::refused(format!(
+            return Err(Error::custody(format!(
                 "{} is readable by other users (mode {mode:03o}); run `chmod 600 {}` and retry",
                 path.display(),
                 path.display()
@@ -345,13 +347,13 @@ impl KeyringCustody {
             // terminal; capturing stdin would hand it an empty stream instead.
             .stdin(std::process::Stdio::inherit())
             .output()
-            .map_err(|e| Error::failed(format!("cannot run security(1): {e}")))
+            .map_err(|e| Error::custody(format!("cannot run security(1): {e}")))
     }
 
     #[cfg(not(target_os = "macos"))]
     fn entry(&self) -> Result<keyring::v1::Entry> {
         keyring::v1::Entry::new(&self.service, &self.account).map_err(|e| {
-            Error::failed(format!(
+            Error::custody(format!(
                 "keyring unavailable: {e}; use --custody env or --custody file:<path> \
                      on a machine without a session keyring"
             ))
@@ -381,7 +383,7 @@ impl Custody for KeyringCustody {
                 Ok(value) if !value.trim().is_empty() => Ok(Some(SecretKey::from_text(&value)?)),
                 Ok(_) => Ok(None),
                 Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(Error::failed(format!(
+                Err(e) => Err(Error::custody(format!(
                     "cannot read the keyring item {}: {e}; use --custody env or \
                      --custody file:<path> on a machine without a session keyring",
                     self.service
@@ -396,7 +398,7 @@ impl Custody for KeyringCustody {
             use std::io::IsTerminal;
 
             if !std::io::stdin().is_terminal() {
-                return Err(Error::refused(
+                return Err(Error::custody(
                     "the macOS keychain asks for the identity on the terminal, so a \
                      non-interactive run cannot store it; use --custody env or \
                      --custody file:<path>",
@@ -404,7 +406,7 @@ impl Custody for KeyringCustody {
             }
             let output = self.security(&add_arguments(&self.service, &self.account))?;
             if !output.status.success() {
-                return Err(Error::failed(format!(
+                return Err(Error::custody(format!(
                     "security add-generic-password failed: {}",
                     String::from_utf8_lossy(&output.stderr).trim()
                 )));
@@ -413,7 +415,7 @@ impl Custody for KeyringCustody {
             // differ, so read back rather than report a missing item as stored.
             match self.get()? {
                 Some(stored) if stored.expose() == key.expose() => Ok(()),
-                _ => Err(Error::failed(
+                _ => Err(Error::custody(
                     "security(1) reported success, but the keychain item does not \
                      hold the key; if it asked twice, the two entries differed",
                 )),
@@ -422,7 +424,7 @@ impl Custody for KeyringCustody {
         #[cfg(not(target_os = "macos"))]
         {
             self.entry()?.set_password(key.expose()).map_err(|e| {
-                Error::failed(format!(
+                Error::custody(format!(
                     "cannot write the keyring item: {e}; use --custody env or \
                          --custody file:<path> on a machine without a session keyring"
                 ))
@@ -441,7 +443,7 @@ impl Custody for KeyringCustody {
             match self.entry()?.delete_credential() {
                 Ok(()) => Ok(()),
                 Err(keyring::Error::NoEntry) => Ok(()),
-                Err(e) => Err(Error::failed(format!(
+                Err(e) => Err(Error::custody(format!(
                     "cannot delete the keyring item: {e}; use --custody env or \
                      --custody file:<path> on a machine without a session keyring"
                 ))),
@@ -473,7 +475,7 @@ impl Custody for MemoryCustody {
         let guard = self
             .inner
             .lock()
-            .map_err(|_| Error::failed("memory custody poisoned"))?;
+            .map_err(|_| Error::custody("memory custody poisoned"))?;
         guard
             .as_ref()
             .map(|k| SecretKey::from_value(k.expose()))
@@ -484,7 +486,7 @@ impl Custody for MemoryCustody {
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| Error::failed("memory custody poisoned"))?;
+            .map_err(|_| Error::custody("memory custody poisoned"))?;
         *guard = Some(SecretKey::from_value(key.expose())?);
         Ok(())
     }
@@ -493,7 +495,7 @@ impl Custody for MemoryCustody {
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| Error::failed("memory custody poisoned"))?;
+            .map_err(|_| Error::custody("memory custody poisoned"))?;
         *guard = None;
         Ok(())
     }

@@ -1,7 +1,7 @@
 use std::io::{IsTerminal, Read};
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use lockset_core::SecretKey;
 use zeroize::Zeroizing;
 
@@ -22,9 +22,10 @@ pub struct ValueSource<'a> {
 /// embedded lines are refused, and an empty value needs `allow_empty`.
 pub fn read_value(source: &ValueSource<'_>) -> Result<Zeroizing<String>> {
     let raw = if let Some(name) = source.from_env {
-        std::env::var(name).with_context(|| format!("{name} is not set"))?
+        std::env::var(name).map_err(|_| usage::error(format!("{name} is not set")))?
     } else if let Some(path) = source.file {
-        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?
+        std::fs::read_to_string(path)
+            .map_err(|error| usage::error(format!("cannot read {}: {error}", path.display())))?
     } else if source.stdin {
         read_stdin()?
     } else if std::io::stdin().is_terminal() {
@@ -37,7 +38,7 @@ pub fn read_value(source: &ValueSource<'_>) -> Result<Zeroizing<String>> {
     };
     let value = raw.trim_end_matches(['\r', '\n']).to_owned();
     if value.contains(['\r', '\n']) {
-        bail!("a dotenv value must be a single line");
+        return Err(usage::error("a dotenv value must be a single line"));
     }
     if value.is_empty() && !source.allow_empty {
         return Err(usage::error(
@@ -62,9 +63,10 @@ pub fn read_key(
     from_env: Option<&str>,
 ) -> Result<SecretKey> {
     let text = if let Some(path) = file {
-        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?
+        std::fs::read_to_string(path)
+            .map_err(|error| usage::error(format!("cannot read {}: {error}", path.display())))?
     } else if let Some(name) = from_env {
-        std::env::var(name).with_context(|| format!("{name} is not set"))?
+        std::env::var(name).map_err(|_| usage::error(format!("{name} is not set")))?
     } else if stdin_flag || !std::io::stdin().is_terminal() {
         let mut buffer = String::new();
         std::io::stdin()

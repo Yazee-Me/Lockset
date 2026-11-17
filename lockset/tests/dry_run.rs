@@ -190,7 +190,8 @@ fn an_invalid_plan_still_fails_without_an_identity() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    // An invalid label is a usage error, not a missing-identity finding.
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("invalid label"), "{stderr}");
 }
 
@@ -201,7 +202,8 @@ fn applying_still_requires_an_identity() {
     let output = lockset(&repo, &keyless(&["grant", A, "--label", "dev-a"]));
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    // No identity is a custody error.
+    assert_eq!(output.status.code(), Some(3), "{stderr}");
     assert!(stderr.contains("no identity in custody"), "{stderr}");
     assert!(
         !repo.read(".sops.yaml").contains(A),

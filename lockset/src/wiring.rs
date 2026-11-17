@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{bail, Context as AnyhowContext, Result};
+use anyhow::{Context as AnyhowContext, Result};
 use lockset_core::sopsfile::SopsFile;
 use lockset_core::{meta, Custody, IdentityView, PathId, PayloadError, Repo, SecretKey, Snapshot};
 use lockset_tools::custody::{EnvCustody, FileCustody, KeyringCustody, UnconfiguredCustody};
@@ -39,10 +39,12 @@ impl Context {
     pub fn require_key(&self) -> Result<SecretKey> {
         let kind = self.custody.kind();
         self.custody.get()?.ok_or_else(|| match kind {
-            lockset_core::CustodyKind::None => anyhow::anyhow!(
-                "no identity source is configured; set LOCKSET_AGE_KEY or pass --custody file:<path>"
-            ),
-            kind => anyhow::anyhow!("no identity in custody ({kind})"),
+            lockset_core::CustodyKind::None => anyhow::Error::new(lockset_core::Error::custody(
+                "no identity source is configured; set LOCKSET_AGE_KEY or pass --custody file:<path>",
+            )),
+            kind => anyhow::Error::new(lockset_core::Error::custody(format!(
+                "no identity in custody ({kind})"
+            ))),
         })
     }
 }
@@ -60,7 +62,9 @@ fn find_root(start: Option<&Path>) -> Result<PathBuf> {
             return Ok(dir);
         }
         if !dir.pop() {
-            bail!("no .sops.yaml found above the start directory; pass --repo");
+            return Err(usage::error(
+                "no .sops.yaml found above the start directory; pass --repo",
+            ));
         }
     }
 }

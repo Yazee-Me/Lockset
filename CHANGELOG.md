@@ -67,6 +67,15 @@
 
 ### Fixed
 
+- The exit-code contract is defined and documented in `--help` and the README:
+  0 ok, 1 findings, 2 usage/config, 3 custody/auth, 4 external tool, 5
+  conflict/lock, 6 partial apply. Custody and sops failures now carry their own
+  error class instead of sharing exit 1.
+- `status --strict` exits 1 on drift, empty values, a missing identity, or
+  unreadable payloads, and `check` now includes empty values and decrypt-verifies
+  with whatever identity is present instead of only a recipient labelled
+  `admin`.
+
 - Payload formats are explicit: dotenv (`.env`) is the only supported format.
   `meta` no longer half-parses a YAML `sops:` block, discovery lists every
   non-hidden file under `secrets/` so an unsupported payload is reported as a

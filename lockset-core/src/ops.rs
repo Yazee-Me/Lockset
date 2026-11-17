@@ -70,6 +70,21 @@ pub fn checks(snapshot: &Snapshot) -> Vec<Check> {
         detail: plaintext.join(", "),
     });
 
+    let empty: Vec<String> = snapshot
+        .payloads
+        .iter()
+        .flat_map(|p| p.empty.iter().map(move |k| format!("{}:{k}", p.id)))
+        .collect();
+    out.push(Check {
+        name: "no empty values".into(),
+        ok: empty.is_empty(),
+        detail: if empty.is_empty() {
+            "none".into()
+        } else {
+            empty.join(", ")
+        },
+    });
+
     let drift = snapshot.drift();
     out.push(Check {
         name: "labels and recipients agree".into(),
@@ -491,6 +506,28 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn checks_flag_empty_values() {
+        let text = format!(
+            "EMPTY=\nTOKEN=ENC[a,type:str]\nsops_age__list_0__map_enc=x\nsops_age__list_0__map_recipient={A}\nsops_version=3.13.3\nsops_mac=ENC[a,type:str]\n"
+        );
+        let payload =
+            crate::meta::parse(PathId::parse("secrets/prod/empty.env").unwrap(), &text).unwrap();
+        let snap = Snapshot::new(".", sops(), vec![payload], None);
+
+        let checks = checks(&snap);
+        let empty = checks
+            .iter()
+            .find(|check| check.name == "no empty values")
+            .unwrap();
+
+        assert!(!empty.ok);
+        assert!(
+            empty.detail.contains("secrets/prod/empty.env:EMPTY"),
+            "{empty:?}"
+        );
     }
 
     #[test]

@@ -7,7 +7,8 @@ use clap::{Parser, Subcommand};
     name = "lockset",
     version,
     about = "Repository secrets: status, keys, recipients, and a runner",
-    long_about = None
+    long_about = None,
+    after_help = crate::usage::HELP
 )]
 pub struct Cli {
     /// Repository root; defaults to the current directory and walks up to .sops.yaml
@@ -38,10 +39,14 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Readiness report: identity, payloads, coverage, drift, empty values
-    Status,
+    Status {
+        /// Exit 1 on drift, empty values, a missing identity, or unreadable payloads
+        #[arg(long)]
+        strict: bool,
+    },
     /// Identity map: label, public key, payload count, whether it is the local key
     Who,
-    /// Invariants that need no private key, plus decrypt-verification as admin
+    /// Invariants that need no private key, plus decrypt verification for this machine
     Check,
     /// Run a command with one or more payloads in its environment (identity stripped)
     Run {

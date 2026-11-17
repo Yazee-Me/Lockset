@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use anyhow::{bail, Result};
 use clap::Parser;
 use lockset_core::ops::{self, Check, GrantRequest, RevokeRequest, RevokeTarget};
-use lockset_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretKey, SecretValue};
+use lockset_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretValue};
 
 use crate::cli::{Cli, Command, KeyCommand, PersonCommand};
 
@@ -329,7 +329,7 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
             Ok(0)
         }
         KeyCommand::Forget { yes } => {
-            if !*yes {
+            if !*yes && !cli.dry_run {
                 if !std::io::stdin().is_terminal() {
                     bail!("refusing to remove the key without --yes");
                 }
@@ -338,10 +338,6 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
                     return Ok(0);
                 }
             }
-            let key = context
-                .custody
-                .get()?
-                .ok_or_else(|| anyhow::anyhow!("no key in custody"))?;
             let mut plan = Plan::default();
             plan.push(Change::ForgetKey {
                 custody: context.custody.kind(),
@@ -350,6 +346,10 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
                 render::plan(&plan, true, cli.json)?;
                 return Ok(0);
             }
+            let key = context
+                .custody
+                .get()?
+                .ok_or_else(|| anyhow::anyhow!("no key in custody"))?;
             exec::apply(
                 &plan,
                 &context.repo,
@@ -378,7 +378,6 @@ fn set(
     if snapshot.payload(&id).is_none() {
         bail!("no such payload: {payload}");
     }
-    let key = context.require_key()?;
     let value = input::read_value(source)?;
 
     let mut plan = Plan::default();
@@ -392,6 +391,7 @@ fn set(
         render::plan(&plan, true, cli.json)?;
         return Ok(0);
     }
+    let key = context.require_key()?;
     for line in exec::apply(
         &plan,
         &context.repo,
@@ -419,9 +419,8 @@ fn rotate(context: &wiring::Context, cli: &Cli, all: bool, payload: &[String]) -
         )
     };
     let snapshot = wiring::snapshot(context)?;
-    let key = context.require_key()?;
     let plan = ops::rotate(&snapshot, ids.as_deref())?;
-    finish(context, cli, plan, &key)
+    finish(context, cli, plan)
 }
 
 fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Result<u8> {
@@ -441,7 +440,6 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
                 None => None,
             };
             let snapshot = wiring::snapshot(context)?;
-            let key = context.require_key()?;
             let plan = ops::grant(
                 &snapshot,
                 &GrantRequest {
@@ -454,6 +452,7 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
             if cli.dry_run || plan.is_empty() {
                 return Ok(0);
             }
+            let key = context.require_key()?;
             for line in exec::apply(
                 &plan,
                 &context.repo,
@@ -497,7 +496,6 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
                 bail!("{label} is a reserved label; use revoke --label {label}");
             }
             let snapshot = wiring::snapshot(context)?;
-            let key = context.require_key()?;
             let plan = ops::revoke(
                 &snapshot,
                 &RevokeRequest {
@@ -506,7 +504,7 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
                     force: false,
                 },
             )?;
-            finish(context, cli, plan, &key)
+            finish(context, cli, plan)
         }
     }
 }
@@ -527,9 +525,8 @@ fn grant(
         },
     };
     let snapshot = wiring::snapshot(context)?;
-    let key = context.require_key()?;
     let plan = ops::grant(&snapshot, &request)?;
-    finish(context, cli, plan, &key)
+    finish(context, cli, plan)
 }
 
 fn revoke(
@@ -541,7 +538,6 @@ fn revoke(
     force: bool,
 ) -> Result<u8> {
     let snapshot = wiring::snapshot(context)?;
-    let key = context.require_key()?;
     let target = match (public, label) {
         (Some(public), None) => RevokeTarget::Key(PubKey::parse(public)?),
         (None, Some(label)) => RevokeTarget::Label(Label::parse(label)?),
@@ -553,20 +549,23 @@ fn revoke(
         force,
     };
     let plan = ops::revoke(&snapshot, &request)?;
-    finish(context, cli, plan, &key)
+    finish(context, cli, plan)
 }
 
-fn finish(context: &wiring::Context, cli: &Cli, plan: Plan, key: &SecretKey) -> Result<u8> {
+/// Render a plan, then require the identity only when the plan is applied, so a
+/// `--dry-run` (and a keyless CI check) can inspect any plan without custody.
+fn finish(context: &wiring::Context, cli: &Cli, plan: Plan) -> Result<u8> {
     render::plan(&plan, cli.dry_run, cli.json)?;
     if cli.dry_run || plan.is_empty() {
         return Ok(0);
     }
+    let key = context.require_key()?;
     for line in exec::apply(
         &plan,
         &context.repo,
         &context.codec,
         context.custody.as_ref(),
-        key,
+        &key,
     )? {
         println!("{line}");
     }

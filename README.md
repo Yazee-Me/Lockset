@@ -96,6 +96,10 @@ mise run install     # link target/release/lockset into ~/.local/bin
   (default 10) and then exits 5 with a conflict instead of racing.
 - A plan records the digest of every file it touches. If one changed after the
   snapshot — an editor, another tool — the apply writes nothing and exits 5.
+- `--dry-run` builds the plan before custody is consulted, so every mutating
+  command renders its plan with no identity at all and a pipeline can diff a
+  change without secrets. The key is required only to apply, and an invalid
+  plan keeps its own exit code instead of hiding behind a missing identity.
 - Writes are durable: the temp file is fsynced before the rename and the parent
   directory after it, and a CRLF `.sops.yaml` is rewritten with CRLF.
 - Paths are `PathId` values parsed relative to the repository root, so no

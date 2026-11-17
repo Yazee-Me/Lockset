@@ -58,6 +58,10 @@
 
 ### Fixed
 
+- `--dry-run` builds and renders the plan before custody is consulted, so
+  `grant`, `revoke`, `rotate`, `person add`/`remove`, `set`, `key import`, and
+  `key forget` can be planned with no identity; the key is required only to
+  apply, and `key forget --dry-run` no longer asks for confirmation.
 - Mutating commands serialize on an advisory repository lock
   (`--lock-timeout`, default 10s; a timeout exits 5), and a plan records the
   digest of every file it touches so an input changed after the snapshot aborts

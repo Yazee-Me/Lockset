@@ -2,6 +2,7 @@
 //! are reported per rule, and only a mutation that has to rewrite `age:` on
 //! such a rule refuses.
 
+#![cfg(unix)]
 mod common;
 
 use std::path::PathBuf;

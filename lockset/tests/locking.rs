@@ -1,6 +1,7 @@
 //! Mutations serialize on the repository lock, a held lock is a conflict, and a
 //! CRLF map keeps its line endings through a rewrite.
 
+#![cfg(unix)]
 mod common;
 
 use std::process::{Command, Stdio};

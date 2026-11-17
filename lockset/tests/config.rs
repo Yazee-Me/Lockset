@@ -1,6 +1,7 @@
 //! `lockset.toml`: layering (flags > environment > config > defaults), the
 //! configurable conventions, and the refusal to invent a default payload.
 
+#![cfg(unix)]
 mod common;
 
 use std::path::{Path, PathBuf};

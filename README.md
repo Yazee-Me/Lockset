@@ -92,14 +92,28 @@ lockset export --payload secrets/prod/deploy.env --format dotenv
 lockset grant age1... --label dev-alice
 ```
 
-With mise (pinned toolchain):
+With mise (pinned rust, sops, and age — the same versions CI uses):
 
 ```sh
 mise install
-mise run test        # cargo test --workspace
+mise run test        # cargo test --workspace --locked
+mise run lint        # fmt, clippy -D warnings, rustdoc -D warnings
+mise run e2e         # end-to-end against the pinned sops and age
+mise run deny        # cargo-deny: advisories, licenses, bans, sources
+mise run audit       # cargo-audit (RustSec)
+mise run check       # all of the above
 mise run build       # release build of the CLI
 mise run install     # link target/release/lockset into ~/.local/bin
 ```
+
+CI runs the same commands: the test matrix covers Linux, macOS, and Windows
+with `--locked`, a lint job runs formatting, clippy, and docs, a supply-chain
+job runs `cargo deny check` and `cargo audit`, and the end-to-end job runs
+`mise run e2e` on Linux and macOS with the pinned `sops`/`age`. The e2e job
+fails loudly when `sops` is missing or older than 3.13 (the version the
+preflight requires), and `deny.toml`/`.cargo/audit.toml` record the one
+transitive advisory with no fixed upgrade (a P-256 timing issue in `age`'s
+dependency tree, which lockset's x25519-only identities do not reach).
 
 ## Diagnostics
 
@@ -160,7 +174,8 @@ paths work on all three:
   KMS/GCP/Azure/Vault rules (those rules parse and are reported per rule; only
   `grant`/`revoke` on them refuse).
 - **CI.** The portability job builds without the keyring backend and checks the
-  Windows, Linux, and macOS targets.
+  Windows, Linux, and macOS targets; the main matrix runs the whole test suite
+  on Linux, macOS, and Windows.
 
 ## Configuration
 

@@ -1,6 +1,7 @@
 //! The identity registry in `lockset.toml`: labels from config, comments as a
 //! migration input, and drift reported instead of silently repaired.
 
+#![cfg(unix)]
 mod common;
 
 use std::path::PathBuf;

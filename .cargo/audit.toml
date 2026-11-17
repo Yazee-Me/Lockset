@@ -1,0 +1,7 @@
+# cargo-audit configuration (used by `mise run audit` and the supply-chain job).
+[advisories]
+# No fixed upgrade exists: age 0.12 (latest) pins crypto-bigint 0.5 through
+# elliptic-curve, and the affected code is P-256 support that lockset does not
+# expose (x25519 identities only). Same entry as deny.toml; re-evaluate when
+# age updates.
+ignore = ["RUSTSEC-2026-0387"]

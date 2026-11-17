@@ -16,13 +16,13 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "DIR")]
     pub repo: Option<PathBuf>,
 
-    /// lockset.toml to read; overrides LOCKSET_CONFIG (default: <repo>/lockset.toml)
+    /// lockset.toml to read; overrides LOCKSET_CONFIG (default: the repository's lockset.toml)
     #[arg(long, global = true, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// env[:NAME] | keyring[:SERVICE] | file:<absolute path> | none; overrides
-    /// LOCKSET_CUSTODY (default: env when the identity variable is set, else
-    /// keyring on a terminal and none otherwise)
+    /// `env[:NAME]` | `keyring[:SERVICE]` | `file:<absolute path>` | `none`;
+    /// overrides LOCKSET_CUSTODY (default: env when the identity variable is
+    /// set, else keyring on a terminal and none otherwise)
     #[arg(long, global = true, value_name = "SPEC")]
     pub custody: Option<String>,
 
@@ -64,7 +64,7 @@ pub enum Command {
     },
     /// Identity map: label, public key, payload count, whether it is the local key
     Who {
-        /// Print a lockset.toml [[identities]] fragment from the .sops.yaml
+        /// Print a lockset.toml `[[identities]]` fragment from the .sops.yaml
         /// comments, for the one-time migration
         #[arg(long)]
         toml: bool,

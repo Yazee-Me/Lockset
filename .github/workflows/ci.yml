@@ -1,5 +1,9 @@
 name: CI
 
+# The gate: the workspace tests on every supported OS, plus lint/docs,
+# supply-chain policy, and an end-to-end run against the pinned sops and age.
+# Tool versions come from mise.toml, so CI and local development agree.
+
 on:
   push:
     branches: [main]
@@ -8,13 +12,36 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: Workspace tests
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+      - name: Test the workspace
+        run: cargo test --workspace --locked
+
+  lint:
+    name: Lint, docs, and the tree guard
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
       - name: Reject the removed identity names
         # The bracketed characters keep this pattern from matching its own text;
         # the names it rejects must never return to the tree. `git grep` searches
@@ -27,15 +54,64 @@ jobs:
             1) exit 0 ;;
             *) echo 'git grep could not scan the tree' >&2; exit "$status" ;;
           esac
-      - name: Test the workspace
-        run: mise run test
-      - name: Release notes carry the breaking change
-        # A release must document the legacy identity/sops rename for its own
-        # version; cargo-dist builds the GitHub release body from CHANGELOG.md.
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Documentation
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+
+  supply-chain:
+    name: Advisories, licenses, bans
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      - name: cargo audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  e2e:
+    name: End-to-end (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+      - name: Run against the pinned sops and age
+        run: mise run e2e
+
+  packages:
+    name: Package metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+      - name: Install cargo-dist
         shell: bash
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf \
             https://github.com/axodotdev/cargo-dist/releases/download/v0.34.0/cargo-dist-installer.sh | sh
+      - name: The crates package with complete metadata
+        run: cargo package --workspace --locked
+      - name: cargo-binstall would fetch the published archives
+        run: ./scripts/check-binstall.sh
+      - name: Release notes carry the breaking change
+        shell: bash
+        run: |
           version=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name=="lockset") | .version')
           body=$(dist plan --tag="v$version" --output-format=json | jq -r '.announcement_github_body // ""')
@@ -44,29 +120,17 @@ jobs:
           printf '%s\n' "$body" | grep -q 'Identity and sops lookup' \
             || { echo "release notes for v$version do not document the identity/sops rename" >&2; exit 1; }
 
-  packages:
-    name: Package metadata
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v5
-      - name: The crates package with complete metadata
-        run: cargo package --workspace --locked
-      - name: cargo-binstall would fetch the published archives
-        shell: bash
-        run: |
-          curl --proto '=https' --tlsv1.2 -LsSf \
-            https://github.com/axodotdev/cargo-dist/releases/download/v0.34.0/cargo-dist-installer.sh | sh
-          ./scripts/check-binstall.sh
-
   msrv:
     name: MSRV (1.89)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
       - name: The declared rust-version builds the workspace
-        run: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --locked
 
   portability:
     name: Supported targets
@@ -78,17 +142,17 @@ jobs:
         # Compiles the arm that explains a missing backend, and runs its test,
         # so the optional-feature path cannot rot.
         run: |
-          cargo check --workspace --all-targets --no-default-features
-          cargo test -p lockset-tools --no-default-features
+          cargo check --workspace --all-targets --no-default-features --locked
+          cargo test -p lockset-tools --no-default-features --locked
       - name: Build for Windows
         run: |
           rustup target add x86_64-pc-windows-gnu
-          cargo check --workspace --lib --bins --target x86_64-pc-windows-gnu
+          cargo check --workspace --lib --bins --target x86_64-pc-windows-gnu --locked
       - name: Build for Linux
         run: |
           rustup target add x86_64-unknown-linux-gnu
-          cargo check --workspace --lib --bins --target x86_64-unknown-linux-gnu
+          cargo check --workspace --lib --bins --target x86_64-unknown-linux-gnu --locked
       - name: Build for macOS
         run: |
           rustup target add aarch64-apple-darwin
-          cargo check --workspace --lib --bins --target aarch64-apple-darwin
+          cargo check --workspace --lib --bins --target aarch64-apple-darwin --locked

@@ -1,6 +1,7 @@
 //! Portability: both path separators, refused ambiguous forms, and CRLF that
 //! survives a real rewrite.
 
+#![cfg(unix)]
 mod common;
 
 use std::path::PathBuf;

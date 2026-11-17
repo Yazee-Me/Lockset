@@ -1,0 +1,50 @@
+# cargo-deny: what CI gates on (`mise run deny`, and the supply-chain job).
+# License policy is permissive-only; advisories are denied except where a
+# transitive dependency has no fixed upgrade, with the reason recorded here.
+
+[advisories]
+ignore = [
+    # age 0.12 (latest) pulls crypto-bigint 0.5 through elliptic-curve, whose
+    # requirement excludes the fixed 0.7 release. The affected code is the
+    # P-256 support age uses for plugin/PIV identities, which lockset does not
+    # expose (x25519 identities only); re-evaluate when age updates.
+    { id = "RUSTSEC-2026-0387", reason = "no fixed upgrade: age 0.12 pins crypto-bigint 0.5 via elliptic-curve; reachable only through P-256 paths lockset does not expose" },
+    # Unmaintained crates that arrive transitively through dependencies with no
+    # maintained alternative on our side yet.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is transitively unmaintained via keyring/zBus on Linux; no upgrade path" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is transitively unmaintained via keyring/zBus on Linux; no upgrade path" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is transitively unmaintained via keyring/zBus on Linux; no upgrade path" },
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml is transitively unmaintained via age's i18n build dependencies; no upgrade path" },
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "CC0-1.0",
+    "MPL-2.0",
+    "BSL-1.0",
+    "OpenSSL",
+    "NCSA",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

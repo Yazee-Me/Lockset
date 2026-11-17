@@ -1,6 +1,7 @@
 //! `set` never reads stdin implicitly, and never stores an empty value unless
 //! the caller says so.
 
+#![cfg(unix)]
 mod common;
 
 use std::path::PathBuf;

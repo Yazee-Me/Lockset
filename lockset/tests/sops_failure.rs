@@ -1,6 +1,7 @@
 //! A sops failure keeps every stderr line, names the payload, and never prints
 //! the identity, even when sops itself echoes it.
 
+#![cfg(unix)]
 mod common;
 
 use std::path::PathBuf;

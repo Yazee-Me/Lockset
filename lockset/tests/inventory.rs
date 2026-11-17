@@ -1,6 +1,7 @@
 //! One malformed payload is a finding, not an abort, and symlinks cannot
 //! duplicate or loop the payload inventory.
 
+#![cfg(unix)]
 mod common;
 
 use common::{lockset, lockset_with, strings, Repo};

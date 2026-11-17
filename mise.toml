@@ -2,6 +2,8 @@
 
 [tools]
 rust = "1.99.1"
+sops = "3.13.3"
+age = "1.3.2"
 
 [tasks.default]
 description = "Gate: the workspace tests"
@@ -9,15 +11,15 @@ depends = ["test"]
 
 [tasks.test]
 description = "Run the workspace tests (no network, no credentials)"
-run = "cargo test --workspace"
+run = "cargo test --workspace --locked"
 
 [tasks.build]
 description = "Build the CLI (release)"
-run = "cargo build --release"
+run = "cargo build --release --locked"
 
 [tasks.install]
 description = "Build the CLI and link it into ~/.local/bin"
-run = "cargo build --quiet --release && mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/target/release/lockset\" \"$HOME/.local/bin/lockset\" && echo \"linked $HOME/.local/bin/lockset\""
+run = "cargo build --quiet --release --locked && mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/target/release/lockset\" \"$HOME/.local/bin/lockset\" && echo \"linked $HOME/.local/bin/lockset\""
 
 [tasks.run]
 description = "Run the CLI: mise run run -- status"
@@ -37,3 +39,27 @@ run = "dist build --artifacts=local"
 [tasks."release:verify"]
 description = "Verify target/distrib: checksums, unpack, run the binary"
 run = "./scripts/verify-artifacts.sh target/distrib"
+
+[tasks.lint]
+description = "Formatting, clippy, and docs (what CI's lint job runs)"
+run = [
+  "cargo fmt --check",
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked",
+]
+
+[tasks.deny]
+description = "cargo-deny: advisories, licenses, bans, and sources"
+run = "cargo deny check"
+
+[tasks.audit]
+description = "RustSec advisories (cargo audit)"
+run = "cargo audit"
+
+[tasks.e2e]
+description = "End-to-end against the pinned sops and age (no shims)"
+run = "LOCKSET_E2E=1 cargo test -p lockset --test e2e --locked"
+
+[tasks.check]
+description = "Everything CI gates on: tests, lint, e2e, deny, audit"
+depends = ["test", "lint", "e2e", "deny", "audit"]

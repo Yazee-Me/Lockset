@@ -1,6 +1,7 @@
 //! Streams: stdout carries data, stderr carries notes, warnings, and debug
 //! lines. `--quiet` and `--verbose` select the level and win over `RUST_LOG`.
 
+#![cfg(unix)]
 mod common;
 
 use std::path::PathBuf;

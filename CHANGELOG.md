@@ -61,6 +61,16 @@
 
 ### Added
 
+- **CI is a full matrix with pinned tools.** The workspace tests run on Ubuntu,
+  macOS, and Windows with `--locked` and a dependency cache; a lint job runs
+  `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
+  `cargo doc` with `-D warnings`; a supply-chain job runs `cargo deny check` and
+  `cargo audit` against `deny.toml`/`.cargo/audit.toml`; and an end-to-end job
+  runs `mise run e2e` against the real `sops` 3.13.3 and `age` 1.3.2 pinned in
+  `mise.toml`. `mise run lint|e2e|deny|audit|check` reproduce every gate
+  locally, and the e2e suite fails with a clear message when sops is missing or
+  older than 3.13.
+
 - **Package metadata, licenses, and install paths are complete.** `LICENSE-MIT`
   and `LICENSE-APACHE` ship at the repository root and in every crate; each
   crate declares `rust-version` (1.89, checked in CI), `repository`,

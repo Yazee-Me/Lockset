@@ -32,6 +32,10 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "SECS", default_value_t = 10)]
     pub lock_timeout: u64,
 
+    /// sops binary; overrides LOCKSET_SOPS and the sops on PATH
+    #[arg(long, global = true, value_name = "PATH")]
+    pub sops: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -48,6 +52,8 @@ pub enum Command {
     Who,
     /// Invariants that need no private key, plus decrypt verification for this machine
     Check,
+    /// Preflight: repo, sops, custody, identity, coverage, payloads, CI policy
+    Doctor,
     /// Print selected payload values for a multi-step pipeline (secret material)
     Export {
         /// Payload to export (repeatable, merged in order, last wins)

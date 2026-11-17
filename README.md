@@ -36,7 +36,8 @@ Every mutating command prints its plan; `--dry-run` stops there.
 
 ## Requirements
 
-- `sops` 3.13 or newer on `PATH` (override with `LOCKSET_SOPS`).
+- `sops` 3.13 or newer on `PATH` (override with `--sops <path>` or
+  `LOCKSET_SOPS`). Mutations check the binary and its version before they start.
 - An age identity: `LOCKSET_AGE_KEY` when set, the keychain item
   `lockset-age-key`, or an explicit `--custody file:<path>`. Give `file:` an
   absolute path outside the repository — a mounted secret such as
@@ -64,6 +65,7 @@ Every mutating command prints its plan; `--dry-run` stops there.
 ```sh
 cargo install --path lockset --locked
 
+lockset doctor                       # preflight: repo, sops, custody, identity, coverage, CI policy
 lockset status                       # identity, payloads, coverage, drift, empty values
 lockset who                          # label -> public key, payload count, local key
 lockset run --payload secrets/dev.env -- ./my-command
@@ -125,6 +127,22 @@ Payloads merge in the order given, last value wins. The output is secret
 material: `export` warns on stderr, so mask values before a runner echoes them,
 keep the files it writes out of git, and prefer `run` whenever one command can
 consume the values.
+
+## Doctor
+
+`lockset doctor` is the preflight a pipeline runs before touching secrets. It
+checks the repository and `.sops.yaml`, that `sops` is present and at least
+3.13, which custody is in use and whether it is readable, that only the current
+identity sources are read, the identity itself, its coverage, the payloads, the
+default payload (`secrets/prod/infra.env`), and the CI custody policy (a
+non-interactive run must have an identity source). It exits 1 and names every
+failing check; `doctor --json` is the same report as a `schema_version: 1`
+document.
+
+```sh
+lockset doctor
+lockset doctor --json | jq -e 'all(.checks[]; .ok)'
+```
 
 ## Exit codes
 

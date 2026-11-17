@@ -30,7 +30,7 @@ impl Context {
         let custody = make_custody(cli.custody.as_deref(), &root, interactive)?;
         Ok(Self {
             repo: FsRepo::new(&root),
-            codec: SopsCodec::new(&root),
+            codec: SopsCodec::new(&root, sops_bin(cli)),
             root,
             custody,
         })
@@ -47,6 +47,15 @@ impl Context {
             ))),
         })
     }
+}
+
+/// `--sops`, then `LOCKSET_SOPS`, then the `sops` on PATH.
+fn sops_bin(cli: &Cli) -> String {
+    cli.sops
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .or_else(|| std::env::var("LOCKSET_SOPS").ok())
+        .unwrap_or_else(|| "sops".to_owned())
 }
 
 fn find_root(start: Option<&Path>) -> Result<PathBuf> {
@@ -332,7 +341,7 @@ mod tests {
         let context = Context {
             root: repo.0.clone(),
             repo: FsRepo::new(&repo.0),
-            codec: SopsCodec::new(&repo.0),
+            codec: SopsCodec::new(&repo.0, "sops"),
             custody: Box::new(FailingCustody),
         };
 

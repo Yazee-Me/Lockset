@@ -14,6 +14,16 @@ fn identity() -> String {
     lockset_core::SecretKey::generate().expose().to_owned()
 }
 
+/// A mutation now preflights `sops --version`; answer it with a script.
+fn fake_sops(repo: &Repo) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = repo.path().join("sops-fake");
+    std::fs::write(&path, "#!/bin/sh\necho 'sops 3.13.3'\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_str().unwrap().to_owned()
+}
+
 fn command(repo: &Repo, args: &[String], key: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_lockset"));
     command
@@ -31,13 +41,22 @@ fn command(repo: &Repo, args: &[String], key: &str) -> Command {
 fn two_concurrent_grants_both_land() {
     let repo = Repo::new("concurrent");
     let key = identity();
+    let sops = fake_sops(&repo);
 
-    let first = command(&repo, &strings(&["grant", A, "--label", "dev-a"]), &key)
-        .spawn()
-        .unwrap();
-    let second = command(&repo, &strings(&["grant", B, "--label", "dev-b"]), &key)
-        .spawn()
-        .unwrap();
+    let first = command(
+        &repo,
+        &strings(&["--sops", &sops, "grant", A, "--label", "dev-a"]),
+        &key,
+    )
+    .spawn()
+    .unwrap();
+    let second = command(
+        &repo,
+        &strings(&["--sops", &sops, "grant", B, "--label", "dev-b"]),
+        &key,
+    )
+    .spawn()
+    .unwrap();
     let first = first.wait_with_output().unwrap();
     let second = second.wait_with_output().unwrap();
 
@@ -98,9 +117,14 @@ fn a_crlf_map_stays_crlf() {
         ),
     );
 
-    let output = command(&repo, &strings(&["grant", B, "--label", "dev-b"]), &key)
-        .output()
-        .unwrap();
+    let sops = fake_sops(&repo);
+    let output = command(
+        &repo,
+        &strings(&["--sops", &sops, "grant", B, "--label", "dev-b"]),
+        &key,
+    )
+    .output()
+    .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(output.status.code(), Some(0), "{stderr}");

@@ -38,7 +38,7 @@ fn json_requested(cli: &Cli) -> Result<bool> {
         return Ok(false);
     }
     match &cli.command {
-        Command::Status { .. } | Command::Who | Command::Check => Ok(true),
+        Command::Status { .. } | Command::Who | Command::Check | Command::Doctor => Ok(true),
         Command::Run { .. } => Err(usage::error(
             "--json prints plans and reports; run has no JSON output",
         )),
@@ -96,6 +96,7 @@ fn run() -> Result<u8> {
             Ok(0)
         }
         Command::Check => check(&context, &cli),
+        Command::Doctor => doctor(&context, &cli),
         Command::Set {
             key,
             payload,
@@ -143,6 +144,190 @@ fn run() -> Result<u8> {
             *force,
         ),
     }
+}
+
+/// The default payload `run` and `set` fall back to.
+const DEFAULT_PAYLOAD: &str = "secrets/prod/infra.env";
+
+/// Preflight for a pipeline: repo, sops, custody, identity, coverage, payloads,
+/// and the CI custody policy. Every item is a finding, so the exit code is 1
+/// when anything is off and the failing check is named.
+fn doctor(context: &wiring::Context, cli: &Cli) -> Result<u8> {
+    let mut checks: Vec<Check> = Vec::new();
+
+    let snapshot = match wiring::snapshot(context) {
+        Ok(snapshot) => {
+            checks.push(Check {
+                name: "repo".into(),
+                ok: true,
+                detail: context.root.display().to_string(),
+            });
+            Some(snapshot)
+        }
+        Err(error) => {
+            checks.push(Check {
+                name: "repo".into(),
+                ok: false,
+                detail: format!("cannot read the repository: {error:#}"),
+            });
+            None
+        }
+    };
+
+    checks.push(match context.codec.preflight() {
+        Ok(version) => Check {
+            name: "sops".into(),
+            ok: true,
+            detail: format!("{version} ({})", context.codec.bin()),
+        },
+        Err(error) => Check {
+            name: "sops".into(),
+            ok: false,
+            detail: error.to_string(),
+        },
+    });
+
+    checks.push(match context.custody.get() {
+        Ok(Some(key)) => match key.public() {
+            Ok(public) => Check {
+                name: "custody".into(),
+                ok: true,
+                detail: format!("{} holds {public}", context.custody.kind()),
+            },
+            Err(error) => Check {
+                name: "custody".into(),
+                ok: false,
+                detail: error.to_string(),
+            },
+        },
+        Ok(None) => Check {
+            name: "custody".into(),
+            ok: true,
+            detail: format!("{} (no identity)", context.custody.kind()),
+        },
+        Err(error) => Check {
+            name: "custody".into(),
+            ok: false,
+            detail: error.to_string(),
+        },
+    });
+
+    checks.push(Check {
+        name: "legacy identity sources".into(),
+        ok: true,
+        detail: "only LOCKSET_AGE_KEY and the lockset-age-key item are read".into(),
+    });
+
+    let kind = context.custody.kind();
+    checks.push(Check {
+        name: "CI custody policy".into(),
+        ok: kind != lockset_core::CustodyKind::None,
+        detail: if kind == lockset_core::CustodyKind::None {
+            "no identity source for a non-interactive run; set LOCKSET_AGE_KEY or \
+             pass --custody file:<path>"
+                .into()
+        } else {
+            format!("{kind}")
+        },
+    });
+
+    match &snapshot {
+        Some(snapshot) => {
+            let status = StatusReport::new(snapshot);
+
+            checks.push(match (&status.identity, &status.identity_error) {
+                (Some(identity), _) => Check {
+                    name: "identity".into(),
+                    ok: true,
+                    detail: format!("{} via {}", identity.public, identity.custody),
+                },
+                (None, Some(error)) => Check {
+                    name: "identity".into(),
+                    ok: false,
+                    detail: format!("unavailable: {error}"),
+                },
+                (None, None) => Check {
+                    name: "identity".into(),
+                    ok: false,
+                    detail: "none — run `lockset key import`".into(),
+                },
+            });
+
+            checks.push(match &status.coverage {
+                Some(coverage) if coverage.missing.is_empty() => Check {
+                    name: "coverage".into(),
+                    ok: true,
+                    detail: format!("opens all {} payloads", coverage.total),
+                },
+                Some(coverage) => Check {
+                    name: "coverage".into(),
+                    ok: false,
+                    detail: format!(
+                        "opens {}/{} payloads; missing: {}",
+                        coverage.opens,
+                        coverage.total,
+                        coverage
+                            .missing
+                            .iter()
+                            .map(|path| path.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                },
+                None => Check {
+                    name: "coverage".into(),
+                    ok: false,
+                    detail: "no identity to check coverage with".into(),
+                },
+            });
+
+            checks.push(Check {
+                name: "payloads".into(),
+                ok: status.payload_errors.is_empty(),
+                detail: if status.payload_errors.is_empty() {
+                    format!("{} payloads", status.payloads.len())
+                } else {
+                    status
+                        .payload_errors
+                        .iter()
+                        .map(|error| format!("{}: {}", error.id, error.error))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                },
+            });
+
+            let has_default = status
+                .payloads
+                .iter()
+                .any(|payload| payload.path.as_str() == DEFAULT_PAYLOAD);
+            checks.push(Check {
+                name: "default payload".into(),
+                ok: has_default,
+                detail: if has_default {
+                    DEFAULT_PAYLOAD.to_owned()
+                } else {
+                    format!("{DEFAULT_PAYLOAD} (missing; pass --payload)")
+                },
+            });
+        }
+        None => {
+            for name in ["identity", "coverage", "payloads", "default payload"] {
+                checks.push(Check {
+                    name: name.into(),
+                    ok: false,
+                    detail: "not checked: `.sops.yaml` could not be read".into(),
+                });
+            }
+        }
+    }
+
+    let report = CheckReport::new(checks);
+    if cli.json {
+        println!("{}", render::json(&report)?);
+    } else {
+        println!("{}", render::check(&report));
+    }
+    Ok(if report.failed() == 0 { 0 } else { 1 })
 }
 
 fn check(context: &wiring::Context, cli: &Cli) -> Result<u8> {
@@ -433,6 +618,7 @@ fn set(
         return Ok(0);
     }
     let key = context.require_key()?;
+    context.codec.preflight()?;
     for line in exec::apply(
         &plan,
         &context.repo,
@@ -498,6 +684,7 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
                 return Ok(0);
             }
             let key = context.require_key()?;
+            context.codec.preflight()?;
             for line in exec::apply(
                 &plan,
                 &context.repo,
@@ -607,6 +794,7 @@ fn finish(context: &wiring::Context, cli: &Cli, plan: Plan) -> Result<u8> {
         return Ok(0);
     }
     let key = context.require_key()?;
+    context.codec.preflight()?;
     for line in exec::apply(
         &plan,
         &context.repo,

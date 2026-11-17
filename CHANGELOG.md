@@ -58,6 +58,11 @@
 
 ### Added
 
+- `lockset doctor [--json]` preflights the repository, the sops version,
+  custody, the identity, coverage, the payloads, the default payload, and the
+  CI custody policy, exiting 1 and naming every failing check. Mutations run the
+  same sops presence/version preflight once before they start, and `--sops
+  <path>` takes precedence over `LOCKSET_SOPS` and the `sops` on `PATH`.
 - `lockset export --payload PATH --format dotenv|json|sh` prints selected
   payload values for multi-step pipelines, merging payloads in order (last
   wins), refusing identity and sops names, and warning on stderr that the

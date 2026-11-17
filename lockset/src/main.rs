@@ -57,7 +57,20 @@ fn run() -> Result<u8> {
             payload,
             stdin,
             from_env,
-        } => set(&context, &cli, key, payload, *stdin, from_env.as_deref()),
+            value_file,
+            allow_empty,
+        } => set(
+            &context,
+            &cli,
+            key,
+            payload,
+            &input::ValueSource {
+                stdin: *stdin,
+                from_env: from_env.as_deref(),
+                file: value_file.as_deref(),
+                allow_empty: *allow_empty,
+            },
+        ),
         Command::Rotate { all, payload } => rotate(&context, &cli, *all, payload),
         Command::Person { command } => person(&context, &cli, command),
         Command::Run {
@@ -330,8 +343,7 @@ fn set(
     cli: &Cli,
     name: &str,
     payload: &str,
-    stdin: bool,
-    from_env: Option<&str>,
+    source: &input::ValueSource<'_>,
 ) -> Result<u8> {
     if !lockset_core::meta::is_name(name) {
         bail!("invalid key name: {name}");
@@ -342,7 +354,7 @@ fn set(
         bail!("no such payload: {payload}");
     }
     let key = context.require_key()?;
-    let value = input::read_value(stdin, from_env)?;
+    let value = input::read_value(source)?;
 
     let mut plan = Plan::default();
     plan.push(Change::SetValue {

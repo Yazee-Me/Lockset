@@ -46,16 +46,24 @@ pub enum Command {
         #[arg(last = true, required = true, value_name = "COMMAND")]
         argv: Vec<String>,
     },
-    /// Set one value: paste at a hidden prompt, or --stdin/--from-env
+    /// Set one value: prompt on a terminal, or read --stdin/--from-env/--value-file
     Set {
         /// Key name in the payload
         key: String,
         #[arg(long = "payload", default_value = "secrets/prod/infra.env")]
         payload: String,
-        #[arg(long)]
+        /// Read the value from stdin
+        #[arg(long, conflicts_with_all = ["from_env", "value_file"])]
         stdin: bool,
+        /// Read the value from this environment variable
         #[arg(long = "from-env", value_name = "NAME")]
         from_env: Option<String>,
+        /// Read the value from a file, for mounted secrets
+        #[arg(long = "value-file", value_name = "PATH")]
+        value_file: Option<PathBuf>,
+        /// Store an empty value; empty input is refused without this flag
+        #[arg(long = "allow-empty")]
+        allow_empty: bool,
     },
     /// Rotate the data key (and re-encrypt every value) of the selected payloads
     Rotate {

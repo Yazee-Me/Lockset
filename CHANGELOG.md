@@ -17,6 +17,13 @@
   item holds it. `--custody file:<path>` needs no change beyond the variable
   name.
 
+- **`lockset set` requires an explicit value source off a terminal.** A
+  non-interactive run now needs `--stdin`, `--from-env NAME`, or the new
+  `--value-file PATH`; it no longer reads stdin just because stdin is not a
+  TTY. Previously `set K --payload … < /dev/null` stored `K=` and said nothing.
+  An empty value is refused unless `--allow-empty` is passed, and the three
+  sources are mutually exclusive.
+
 ### Security
 
 - `lockset run` no longer hands the identity to the command it starts: the

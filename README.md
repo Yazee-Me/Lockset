@@ -11,7 +11,10 @@ secret store.
   `status`, `who`, `check`.
 - Runs a command with one or more payloads in its environment, never with the
   identity: `run`.
-- Sets a single value and reads it back to prove it landed: `set`.
+- Sets a single value and reads it back to prove it landed: `set`. On a
+  terminal it prompts with the input hidden; a pipeline names its source with
+  `--stdin`, `--from-env NAME`, or `--value-file PATH`, and an empty value needs
+  `--allow-empty`.
 - Rotates data keys without touching values: `rotate`.
 - Grants and revokes recipients, rewriting only the `age:` line of
   `.sops.yaml`, re-wrapping the affected payloads, and rotating the data key on
@@ -58,7 +61,10 @@ lockset status                       # identity, payloads, coverage, drift, empt
 lockset who                          # label -> public key, payload count, local key
 lockset run --payload secrets/dev.env -- ./my-command
 lockset run --pass-custody -- ./tool  # deliberate exception: the child gets the identity environment
-lockset set NEW_KEY --payload secrets/dev.env
+lockset set NEW_KEY --payload secrets/dev.env      # hidden prompt
+printf '%s' "$NEW_KEY" | lockset set NEW_KEY --payload secrets/dev.env --stdin
+lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY
+lockset set NEW_KEY --payload secrets/dev.env --value-file /run/secrets/new-key
 lockset grant age1... --label dev-alice
 ```
 

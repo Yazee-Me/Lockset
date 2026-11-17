@@ -137,7 +137,7 @@ Lockset runs on Linux, macOS, and Windows. The same repository and the same
 paths work on all three:
 
 - **Separators.** Payload paths, `repo.sops_config`, and `repo.default_payloads`
-  accept `/` and `\\`; they are stored and compared as `/`, so
+  accept `/` and `\`; they are stored and compared as `/`, so
   `secrets\\dev.env` and `secrets/dev.env` are one file. Ambiguous forms are
   refused rather than guessed: absolute POSIX paths, drive (`C:`) and UNC
   (`\\\\server`) paths, `.`/`..`/empty segments, and segments containing `:`
@@ -373,6 +373,40 @@ unreadable payloads; without `--strict` it always reports and exits 0. `check`
 covers identity presence, unreadable payloads, ciphertext, plaintext, empty
 values, label drift, admin coverage, and a decrypt proof for whatever identity
 this machine has — no particular label is required.
+
+## Container image
+
+`ghcr.io/yazee-me/lockset` carries the CLI **and** a pinned, checksum-verified
+`sops` (3.13.3), so a pipeline needs neither installed. It is built for
+`linux/amd64` and `linux/arm64` and runs as the non-root user `10001` with
+`/repo` as its working directory and `lockset` as its entrypoint. Tags are
+`:<version>`, `:<major.minor>`, and `:latest` (a prerelease gets its version
+tag only). Every release records the digest in `image-digest.txt`; pin it:
+
+```sh
+# env custody: what a CI job usually wants
+docker run --rm -v "$PWD:/repo" -w /repo -e LOCKSET_AGE_KEY \
+  ghcr.io/yazee-me/lockset:0.1.0 doctor
+
+docker run --rm -v "$PWD:/repo" -w /repo -e LOCKSET_AGE_KEY \
+  ghcr.io/yazee-me/lockset@sha256:<digest from image-digest.txt> \
+  run --payload secrets/dev.env -- ./deploy.sh
+
+# file custody: mount the key read-only and run as its owner so mode 0600 is readable
+docker run --rm -v "$PWD:/repo" -v /run/secrets:/run/secrets:ro \
+  --user "$(id -u):$(id -g)" -w /repo \
+  ghcr.io/yazee-me/lockset:0.1.0 --custody file:/run/secrets/age-key doctor
+```
+
+Nothing secret is part of the image or its layers: the only key source is what
+you mount or pass in the environment. Read-only commands (`status`, `who`,
+`check`, `doctor`, `export`, `run`) work with `--read-only`; a mutation needs a
+writable repository mount for its lock and the rewritten payloads. Build and
+test it locally with `docker build -t lockset .` and
+`./scripts/container-smoke.sh lockset` (the script generates a throwaway age
+identity, encrypts a payload with the image's sops, then runs `doctor`, `run`,
+and file custody, and checks the non-root user and the absence of keys in the
+layers).
 
 ## Releases
 

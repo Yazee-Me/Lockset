@@ -1,0 +1,6 @@
+target
+.git
+.github
+scripts
+dist-workspace.toml
+*.md

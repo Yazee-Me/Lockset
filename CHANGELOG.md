@@ -61,6 +61,17 @@
 
 ### Added
 
+- **A container image, `ghcr.io/yazee-me/lockset`, carries lockset and its
+  pinned sops.** Built for amd64 and arm64 in a multi-stage `Dockerfile`:
+  sops 3.13.3 is fetched by version and verified against its published SHA-256
+  per architecture, the runtime has CA certificates and no build tools, the
+  user is non-root (uid 10001), and `/repo` is the working directory with
+  `lockset` as the entrypoint. A tag publishes `:<version>`, `:<major.minor>`,
+  and `:latest` (prereleases: version only) and writes the multi-arch digest to
+  the release as `image-digest.txt`; pull requests build the image and run
+  `scripts/container-smoke.sh` (doctor, run, env and file custody, non-root, no
+  keys in the layers).
+
 - **A tag releases installable binaries with provenance.** `v<version>` runs
   the cargo-dist workflow: Linux x86_64/aarch64 (gnu and musl), macOS
   x86_64/aarch64, and Windows x86_64 archives, each with a `.sha256`, plus shell

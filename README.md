@@ -32,7 +32,7 @@ Every mutating command prints its plan; `--dry-run` stops there.
 | --- | --- |
 | `lockset-core` | Model, `.sops.yaml` parse/rewrite, payload metadata, plans, reports. No I/O, no environment, no OS code; every external capability is a port (`Codec`, `Custody`, `Repo`). |
 | `lockset-tools` | The adapters: `FsRepo`, `SopsCodec` (the only external tool in the loop), and custody over the keychain, `LOCKSET_AGE_KEY`, a file, or memory. |
-| `lockset` | The CLI. |
+| `lockset` | The CLI, and the orchestration as a library: `lockset::run` takes the parsed arguments plus `Inputs` (variables, working directory, stdin, terminal) and two writers, so a test or an action runs the same handlers without spawning a process. `main` is only parse → run → exit code. |
 
 ## Requirements
 
@@ -343,6 +343,12 @@ this machine has — no particular label is required.
 - `lockset-core` never spawns a process, reads the environment, or touches the
   filesystem; `lockset-tools` implements the ports. That is what makes the model
   testable without credentials and reusable from another front end.
+- The CLI is a thin binary over `lockset::run`: the process environment is
+  captured once as `Inputs` and the adapters take it explicitly
+  (`SopsCodec::with_environment`, `EnvCustody::with_environment`), so nothing
+  below `main` reaches for a global. Output goes through the caller's writers,
+  diagnostics through an explicit level (`RUST_LOG` is read from the same
+  inputs), and `run_with_context` accepts ports built by the caller.
 - Plans are data (`Change` values) and `exec::apply` is the only place
   mutations happen, so `--dry-run` and tests share one path.
 - Every mutation is transactional: `exec::apply` reads the bytes of each file a

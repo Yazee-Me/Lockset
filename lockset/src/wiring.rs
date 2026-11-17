@@ -1,4 +1,3 @@
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -12,6 +11,7 @@ use lockset_tools::lock::Lock;
 use lockset_tools::sops::SopsCodec;
 
 use crate::cli::{Cli, Command};
+use crate::inputs::Inputs;
 use crate::usage;
 
 /// The identity variable the tests drive the default custody through.
@@ -34,22 +34,26 @@ pub struct Context {
 pub const CUSTODY_ENV: &str = "LOCKSET_CUSTODY";
 
 impl Context {
-    pub fn detect(cli: &Cli) -> Result<Self> {
-        let root = find_root(repo_start(cli))?;
-        let config = load_config(cli.config.as_deref(), &root)?;
-        let interactive = std::io::stdin().is_terminal();
-        let spec = custody_spec(cli);
-        let custody = make_custody(spec.as_deref(), &root, interactive, &config)?;
-        let codec = SopsCodec::new(&root, sops_bin(cli, &config), config.codec.min_version)
-            .with_config(config.sops_config.clone());
-        log::debug!("repository root {}", root.display());
-        log::debug!("custody {}", custody.kind());
-        log::debug!(
-            "custody spec {}",
-            spec.as_deref().unwrap_or("auto (policy)")
-        );
-        log::debug!("sops {}", codec.bin());
-        log::debug!("sops config {}", config.sops_config);
+    /// Build the context from the parsed arguments and the injected inputs;
+    /// nothing here reads the process environment.
+    pub fn detect(cli: &Cli, inputs: &Inputs) -> Result<Self> {
+        let root = find_root(repo_start(cli, inputs), inputs.cwd())?;
+        let config = load_config(cli.config.as_deref(), &root, inputs)?;
+        let spec = custody_spec(cli, inputs);
+        let custody = make_custody(
+            spec.as_deref(),
+            &root,
+            inputs.is_interactive(),
+            &config,
+            inputs,
+        )?;
+        let codec = SopsCodec::new(
+            &root,
+            sops_bin(cli, &config, inputs),
+            config.codec.min_version,
+        )
+        .with_config(config.sops_config.clone())
+        .with_environment(inputs.vars_os());
         Ok(Self {
             repo: FsRepo::new(&root),
             codec,
@@ -76,28 +80,28 @@ impl Context {
     }
 }
 
-/// `--repo`, then `LOCKSET_REPO`, then the current directory.
-fn repo_start(cli: &Cli) -> Option<PathBuf> {
+/// `--repo`, then `LOCKSET_REPO`, then the working directory.
+fn repo_start(cli: &Cli, inputs: &Inputs) -> Option<PathBuf> {
     cli.repo
         .clone()
-        .or_else(|| std::env::var_os("LOCKSET_REPO").map(PathBuf::from))
+        .or_else(|| inputs.var("LOCKSET_REPO").map(PathBuf::from))
 }
 
 /// `--sops`, then `LOCKSET_SOPS`, then `codec.sops`, then the sops on PATH.
-fn sops_bin(cli: &Cli, config: &Config) -> String {
+fn sops_bin(cli: &Cli, config: &Config, inputs: &Inputs) -> String {
     cli.sops
         .as_ref()
         .map(|path| path.display().to_string())
-        .or_else(|| std::env::var("LOCKSET_SOPS").ok())
+        .or_else(|| inputs.var("LOCKSET_SOPS").map(str::to_owned))
         .unwrap_or_else(|| config.codec.sops.clone())
 }
 
 /// `--config`, then `LOCKSET_CONFIG`, then `<root>/lockset.toml`. An explicit
 /// file must exist; the implicit one is optional.
-fn load_config(explicit: Option<&Path>, root: &Path) -> Result<Config> {
+fn load_config(explicit: Option<&Path>, root: &Path, inputs: &Inputs) -> Result<Config> {
     let (path, required) = match explicit {
         Some(path) => (path.to_path_buf(), true),
-        None => match std::env::var_os("LOCKSET_CONFIG") {
+        None => match inputs.var("LOCKSET_CONFIG") {
             Some(value) => (PathBuf::from(value), true),
             None => (root.join(CONFIG_FILE), false),
         },
@@ -116,11 +120,8 @@ fn load_config(explicit: Option<&Path>, root: &Path) -> Result<Config> {
     Config::parse(&text).map_err(|error| usage::error(format!("{}: {error}", path.display())))
 }
 
-fn find_root(start: Option<PathBuf>) -> Result<PathBuf> {
-    let start = match start {
-        Some(dir) => dir,
-        None => std::env::current_dir().context("cannot resolve the current directory")?,
-    };
+fn find_root(start: Option<PathBuf>, cwd: &Path) -> Result<PathBuf> {
+    let start = start.unwrap_or_else(|| cwd.to_path_buf());
     let mut dir = start
         .canonicalize()
         .with_context(|| format!("cannot resolve {}", start.display()))?;
@@ -140,12 +141,11 @@ fn find_root(start: Option<PathBuf>) -> Result<PathBuf> {
 /// then `custody.kind`, then the default: the keychain on a terminal and
 /// nothing otherwise — a container must not be handed whichever key a keychain
 /// happens to hold, nor be made to fail when it holds none.
-fn custody_spec(cli: &Cli) -> Option<String> {
-    cli.custody.clone().or_else(|| {
-        std::env::var(CUSTODY_ENV)
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-    })
+fn custody_spec(cli: &Cli, inputs: &Inputs) -> Option<String> {
+    cli.custody
+        .clone()
+        .or_else(|| inputs.var(CUSTODY_ENV).map(str::to_owned))
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn make_custody(
@@ -153,16 +153,17 @@ fn make_custody(
     root: &Path,
     interactive: bool,
     config: &Config,
+    inputs: &Inputs,
 ) -> Result<Box<dyn Custody>> {
     if let Some(spec) = spec {
-        return build_custody(&CustodySpec::parse(spec)?, root, config);
+        return build_custody(&CustodySpec::parse(spec)?, root, config, inputs);
     }
-    if env_is_set(&config.custody.env) {
-        return Ok(env_custody(&config.custody.env));
+    if inputs.var_is_set(&config.custody.env) {
+        return Ok(env_custody(&config.custody.env, inputs));
     }
     if config.custody.kind == "auto" {
         return Ok(if interactive {
-            keyring_custody(config, &config.custody.keychain_item)
+            keyring_custody(config, &config.custody.keychain_item, inputs)
         } else {
             Box::new(UnconfiguredCustody)
         });
@@ -170,51 +171,56 @@ fn make_custody(
     // Validated at load time; parsing again keeps one code path for every form.
     let spec = CustodySpec::parse(&config.custody.kind)
         .map_err(|error| usage::error(format!("custody.kind: {error}")))?;
-    build_custody(&spec, root, config)
+    build_custody(&spec, root, config, inputs)
 }
 
-fn build_custody(spec: &CustodySpec, root: &Path, config: &Config) -> Result<Box<dyn Custody>> {
+fn build_custody(
+    spec: &CustodySpec,
+    root: &Path,
+    config: &Config,
+    inputs: &Inputs,
+) -> Result<Box<dyn Custody>> {
     Ok(match spec {
-        CustodySpec::Env(None) => env_custody(&config.custody.env),
-        CustodySpec::Env(Some(name)) => env_custody(name),
-        CustodySpec::Keyring(None) => keyring_custody(config, &config.custody.keychain_item),
-        CustodySpec::Keyring(Some(service)) => keyring_custody(config, service),
+        CustodySpec::Env(None) => env_custody(&config.custody.env, inputs),
+        CustodySpec::Env(Some(name)) => env_custody(name, inputs),
+        CustodySpec::Keyring(None) => {
+            keyring_custody(config, &config.custody.keychain_item, inputs)
+        }
+        CustodySpec::Keyring(Some(service)) => keyring_custody(config, service, inputs),
         CustodySpec::File(path) => Box::new(FileCustody::new(path, root)?),
         CustodySpec::None => Box::new(UnconfiguredCustody),
     })
 }
 
-fn env_is_set(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|value| !value.trim().is_empty())
+fn env_custody(var: &str, inputs: &Inputs) -> Box<dyn Custody> {
+    Box::new(EnvCustody::new(var).with_environment(inputs.vars_os()))
 }
 
-fn env_custody(var: &str) -> Box<dyn Custody> {
-    Box::new(EnvCustody::new(var))
+fn keyring_custody(config: &Config, service: &str, inputs: &Inputs) -> Box<dyn Custody> {
+    Box::new(keyring_entry(config, service, inputs))
 }
 
-fn keyring_custody(config: &Config, service: &str) -> Box<dyn Custody> {
-    Box::new(keyring_entry(config, service))
-}
-
-fn keyring_entry(config: &Config, service: &str) -> KeyringCustody {
-    KeyringCustody::new(service, keychain_account(config))
+fn keyring_entry(config: &Config, service: &str, inputs: &Inputs) -> KeyringCustody {
+    KeyringCustody::new(service, keychain_account(config, inputs))
 }
 
 /// The account a per-repo keychain item lives under: `custody.keychain_account`
-/// when set, else the current user.
-fn keychain_account(config: &Config) -> String {
+/// when set, else the current user, as the injected environment names them.
+fn keychain_account(config: &Config, inputs: &Inputs) -> String {
     config
         .custody
         .keychain_account
         .clone()
-        .unwrap_or_else(current_user)
+        .unwrap_or_else(|| current_user(inputs))
 }
 
-fn current_user() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "lockset".to_owned())
+fn current_user(inputs: &Inputs) -> String {
+    inputs
+        .var("USER")
+        .or_else(|| inputs.var("LOGNAME"))
+        .or_else(|| inputs.var("USERNAME"))
+        .unwrap_or("lockset")
+        .to_owned()
 }
 
 /// Hold the repository lock while a command that writes runs. A dry run or a
@@ -320,65 +326,52 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsString;
-    use std::sync::Mutex;
-
     use clap::Parser;
     use lockset_core::CustodyKind;
 
     use super::*;
 
-    /// The tests below read and write process-wide variables.
-    static ENV: Mutex<()> = Mutex::new(());
-
-    /// Sets one variable for the test and puts the previous value back on drop.
-    struct SetVar {
-        name: &'static str,
-        previous: Option<OsString>,
+    fn headless() -> Inputs {
+        Inputs::default()
     }
 
-    impl SetVar {
-        fn new(name: &'static str, value: &str) -> Self {
-            let previous = std::env::var_os(name);
-            std::env::set_var(name, value);
-            Self { name, previous }
-        }
-    }
-
-    impl Drop for SetVar {
-        fn drop(&mut self) {
-            match self.previous.take() {
-                Some(value) => std::env::set_var(self.name, value),
-                None => std::env::remove_var(self.name),
-            }
-        }
-    }
-
-    fn default_kind(interactive: bool) -> CustodyKind {
-        make_custody(None, Path::new("/tmp"), interactive, &Config::default())
-            .expect("the default custody resolves")
-            .kind()
+    fn default_kind(inputs: &Inputs) -> CustodyKind {
+        make_custody(
+            None,
+            Path::new("/tmp"),
+            inputs.is_interactive(),
+            &Config::default(),
+            inputs,
+        )
+        .expect("the default custody resolves")
+        .kind()
     }
 
     #[test]
-    fn default_custody_selects_on_the_current_variable_and_the_terminal() {
-        let _env = ENV.lock().unwrap();
+    fn default_custody_selects_on_the_injected_variable_and_the_terminal() {
         let key = SecretKey::generate();
-        let guard = SetVar::new(KEY_ENV, key.expose());
-        assert_eq!(default_kind(false), CustodyKind::Env);
-        drop(guard);
 
-        let guard = SetVar::new(KEY_ENV, "   ");
-        assert_eq!(default_kind(true), CustodyKind::Keyring);
-        assert_eq!(default_kind(false), CustodyKind::None);
-        drop(guard);
+        let with_key = headless().with_var(KEY_ENV, key.expose());
+        assert_eq!(default_kind(&with_key), CustodyKind::Env);
+
+        let blank_on_a_terminal = headless().with_var(KEY_ENV, "   ").interactive(true);
+        assert_eq!(default_kind(&blank_on_a_terminal), CustodyKind::Keyring);
+
+        let blank_headless = headless().with_var(KEY_ENV, "   ");
+        assert_eq!(default_kind(&blank_headless), CustodyKind::None);
     }
 
     #[test]
     fn an_unknown_custody_spec_is_a_usage_error() {
-        let error = make_custody(Some("bogus"), Path::new("/tmp"), true, &Config::default())
-            .err()
-            .expect("an unknown custody must be refused");
+        let error = make_custody(
+            Some("bogus"),
+            Path::new("/tmp"),
+            true,
+            &Config::default(),
+            &headless(),
+        )
+        .err()
+        .expect("an unknown custody must be refused");
 
         assert_eq!(usage::exit_code(&error), 2, "{error}");
         let message = error.to_string();
@@ -394,56 +387,62 @@ mod tests {
     }
 
     #[test]
-    fn an_env_name_reads_that_variable() {
-        let _env = ENV.lock().unwrap();
+    fn an_env_name_reads_that_injected_variable() {
         let first = SecretKey::generate();
         let second = SecretKey::generate();
-        let _first = SetVar::new("LOCKSET_TEST_KEY_A", first.expose());
-        let _second = SetVar::new("LOCKSET_TEST_KEY_B", second.expose());
-        let _default = SetVar::new(KEY_ENV, second.expose());
+        let inputs = headless()
+            .with_var("LOCKSET_TEST_KEY_A", first.expose())
+            .with_var("LOCKSET_TEST_KEY_B", second.expose())
+            .with_var(KEY_ENV, second.expose());
 
         let custody = make_custody(
             Some("env:LOCKSET_TEST_KEY_A"),
             Path::new("/tmp"),
             false,
             &Config::default(),
+            &inputs,
         )
         .unwrap();
         let key = custody
             .get()
             .unwrap()
             .expect("the named variable holds a key");
+
         assert_eq!(key.public().unwrap(), first.public().unwrap());
         assert_ne!(key.public().unwrap(), second.public().unwrap());
     }
 
     #[test]
     fn the_flag_wins_over_lockset_custody() {
-        let _env = ENV.lock().unwrap();
-        let _guard = SetVar::new(CUSTODY_ENV, "env:FROM_ENV");
+        let inputs = headless().with_var(CUSTODY_ENV, "env:FROM_ENV");
 
         let plain = Cli::parse_from(["lockset", "status"]);
-        assert_eq!(custody_spec(&plain).as_deref(), Some("env:FROM_ENV"));
+        assert_eq!(
+            custody_spec(&plain, &inputs).as_deref(),
+            Some("env:FROM_ENV")
+        );
 
         let flagged = Cli::parse_from(["lockset", "--custody", "env:FROM_FLAG", "status"]);
-        assert_eq!(custody_spec(&flagged).as_deref(), Some("env:FROM_FLAG"));
+        assert_eq!(
+            custody_spec(&flagged, &inputs).as_deref(),
+            Some("env:FROM_FLAG")
+        );
     }
 
     #[test]
     fn an_empty_lockset_custody_is_unset() {
-        let _env = ENV.lock().unwrap();
-        let _guard = SetVar::new(CUSTODY_ENV, "   ");
+        let inputs = headless().with_var(CUSTODY_ENV, "   ");
         let cli = Cli::parse_from(["lockset", "status"]);
 
-        assert_eq!(custody_spec(&cli), None);
+        assert_eq!(custody_spec(&cli, &inputs), None);
     }
 
     #[test]
     fn a_config_kind_applies_off_a_terminal() {
-        let _env = ENV.lock().unwrap();
+        let inputs = headless();
         let config = Config::parse("[custody]\nkind = \"none\"\n").unwrap();
         assert_eq!(
-            make_custody(None, Path::new("/tmp"), false, &config)
+            make_custody(None, Path::new("/tmp"), false, &config, &inputs)
                 .unwrap()
                 .kind(),
             CustodyKind::None
@@ -451,7 +450,7 @@ mod tests {
 
         let config = Config::parse("[custody]\nkind = \"keyring\"\n").unwrap();
         assert_eq!(
-            make_custody(None, Path::new("/tmp"), false, &config)
+            make_custody(None, Path::new("/tmp"), false, &config, &inputs)
                 .unwrap()
                 .kind(),
             CustodyKind::Keyring,
@@ -461,13 +460,12 @@ mod tests {
 
     #[test]
     fn the_identity_variable_wins_over_the_config_kind() {
-        let _env = ENV.lock().unwrap();
         let key = SecretKey::generate();
-        let _guard = SetVar::new(KEY_ENV, key.expose());
+        let inputs = headless().with_var(KEY_ENV, key.expose());
         let config = Config::parse("[custody]\nkind = \"none\"\n").unwrap();
 
         assert_eq!(
-            make_custody(None, Path::new("/tmp"), false, &config)
+            make_custody(None, Path::new("/tmp"), false, &config, &inputs)
                 .unwrap()
                 .kind(),
             CustodyKind::Env
@@ -476,12 +474,11 @@ mod tests {
 
     #[test]
     fn a_config_env_name_selects_that_variable() {
-        let _env = ENV.lock().unwrap();
         let key = SecretKey::generate();
-        let _other = SetVar::new("LOCKSET_TEST_CONFIG_KEY", key.expose());
+        let inputs = headless().with_var("LOCKSET_TEST_CONFIG_KEY", key.expose());
         let config = Config::parse("[custody]\nkind = \"env:LOCKSET_TEST_CONFIG_KEY\"\n").unwrap();
 
-        let custody = make_custody(None, Path::new("/tmp"), false, &config).unwrap();
+        let custody = make_custody(None, Path::new("/tmp"), false, &config, &inputs).unwrap();
 
         assert_eq!(custody.kind(), CustodyKind::Env);
         assert_eq!(
@@ -497,19 +494,35 @@ mod tests {
 
     #[test]
     fn a_per_repo_keychain_item_and_account_are_used() {
+        let inputs = headless().with_var("USER", "dev");
         let config = Config::parse(
             "[custody]\nkind = \"keyring\"\nkeychain_item = \"lockset-age-key-app\"\nkeychain_account = \"ci\"\n",
         )
         .unwrap();
 
-        let entry = keyring_entry(&config, &config.custody.keychain_item);
+        let entry = keyring_entry(&config, &config.custody.keychain_item, &inputs);
         assert_eq!(entry.service(), "lockset-age-key-app");
         assert_eq!(entry.account(), "ci");
 
         // An explicit `keyring:<service>` keeps the configured account.
-        let entry = keyring_entry(&config, "shared-item");
+        let entry = keyring_entry(&config, "shared-item", &inputs);
         assert_eq!(entry.service(), "shared-item");
         assert_eq!(entry.account(), "ci");
+
+        // Without an account the injected user names it.
+        let default_account = Config::default();
+        let entry = keyring_entry(&default_account, "item", &inputs);
+        assert_eq!(entry.account(), "dev");
+    }
+
+    #[test]
+    fn a_repository_root_can_come_from_a_sops_config_or_a_config_file() {
+        let repo = TempRepo::new("root");
+        let cli = Cli::parse_from(["lockset", "status"]);
+        let root = find_root(None, &repo.0).expect("the root is found");
+
+        assert_eq!(root, repo.0.canonicalize().unwrap());
+        assert_eq!(repo_start(&cli, &headless()), None);
     }
 
     /// Custody that cannot answer, as a container without a session keyring.

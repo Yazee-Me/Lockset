@@ -54,6 +54,9 @@ pub struct SopsCodec {
     min: Version,
     /// The sops config file, from `repo.sops_config`.
     config: PathId,
+    /// The parent environment the child inherits (minus identity and `SOPS_*`),
+    /// injected instead of read from the process.
+    environment: Vec<(OsString, OsString)>,
     /// The preflight result, so a command checks the tool once.
     checked: OnceLock<std::result::Result<Version, String>>,
 }
@@ -66,6 +69,7 @@ impl SopsCodec {
             min,
             config: PathId::parse(lockset_core::config::DEFAULT_SOPS_CONFIG)
                 .expect("the default sops config path is valid"),
+            environment: Vec::new(),
             checked: OnceLock::new(),
         }
     }
@@ -73,6 +77,13 @@ impl SopsCodec {
     /// Read and rewrite the sops config at `path` instead of `.sops.yaml`.
     pub fn with_config(mut self, path: PathId) -> Self {
         self.config = path;
+        self
+    }
+
+    /// Give the sops children this environment instead of the process's own.
+    /// The identity and every `SOPS_*` variable are removed from it.
+    pub fn with_environment(mut self, environment: Vec<(OsString, OsString)>) -> Self {
+        self.environment = environment;
         self
     }
 
@@ -93,7 +104,7 @@ impl SopsCodec {
             // Same policy as every other sops child: no identity, no SOPS_*
             // overrides. `--version` needs neither.
             .env_clear()
-            .envs(env::without_identity(std::env::vars_os()))
+            .envs(env::without_identity(self.environment.clone()))
             .output()
             .map_err(|error| {
                 Error::tool(format!(
@@ -152,12 +163,7 @@ impl SopsCodec {
     /// parent's identity and every `SOPS_*` variable are dropped, so
     /// `SOPS_AGE_KEY` is the only key source and no inherited override can
     /// point sops at another one.
-    fn command(
-        &self,
-        args: &[&str],
-        key: &SecretKey,
-        parent_env: impl IntoIterator<Item = (OsString, OsString)>,
-    ) -> Command {
+    fn command(&self, args: &[&str], key: &SecretKey) -> Command {
         let mut command = Command::new(&self.bin);
         // sops looks for `.sops.yaml` in the working directory we set, so the
         // flag is only needed when the repository keeps its config elsewhere.
@@ -168,13 +174,13 @@ impl SopsCodec {
             .args(args)
             .current_dir(&self.root)
             .env_clear()
-            .envs(env::without_identity(parent_env))
+            .envs(env::without_identity(self.environment.clone()))
             .env("SOPS_AGE_KEY", key.expose());
         command
     }
 
     fn run(&self, args: &[&str], key: &SecretKey) -> Result<Output> {
-        self.command(args, key, std::env::vars_os())
+        self.command(args, key)
             .output()
             .map_err(|e| Error::tool(format!("cannot run {}: {e}", self.bin)))
     }
@@ -225,11 +231,7 @@ impl Codec for SopsCodec {
         let selector = format!("[\"{name}\"]");
 
         let mut child = self
-            .command(
-                &["set", "--value-stdin", id.as_str(), &selector],
-                key,
-                std::env::vars_os(),
-            )
+            .command(&["set", "--value-stdin", id.as_str(), &selector], key)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -313,8 +315,12 @@ mod tests {
         ]
     }
 
+    fn codec(name: &str) -> SopsCodec {
+        SopsCodec::new("/repo", name, MIN_VERSION).with_environment(parent())
+    }
+
     fn command(codec: &SopsCodec, key: &SecretKey) -> Command {
-        codec.command(&["-d", "secrets/dev.env"], key, parent())
+        codec.command(&["-d", "secrets/dev.env"], key)
     }
 
     fn child_env(command: &Command) -> BTreeMap<String, String> {
@@ -331,7 +337,7 @@ mod tests {
 
     #[test]
     fn the_sops_child_holds_only_its_own_key() {
-        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION);
+        let codec = codec("sops");
         let key = SecretKey::generate();
         let env = child_env(&command(&codec, &key));
 
@@ -348,8 +354,7 @@ mod tests {
 
     #[test]
     fn a_non_default_config_is_passed_to_sops() {
-        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION)
-            .with_config(PathId::parse("sops/settings.yaml").unwrap());
+        let codec = codec("sops").with_config(PathId::parse("sops/settings.yaml").unwrap());
         let key = SecretKey::generate();
         let argv: Vec<String> = command(&codec, &key)
             .get_args()
@@ -362,7 +367,7 @@ mod tests {
 
     #[test]
     fn the_default_config_is_left_to_sops_discovery() {
-        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION);
+        let codec = codec("sops");
         let key = SecretKey::generate();
         let argv: Vec<String> = command(&codec, &key)
             .get_args()
@@ -374,7 +379,7 @@ mod tests {
 
     #[test]
     fn the_key_never_reaches_argv() {
-        let codec = SopsCodec::new("/repo", "sops", MIN_VERSION);
+        let codec = codec("sops");
         let key = SecretKey::generate();
         let argv: Vec<String> = command(&codec, &key)
             .get_args()

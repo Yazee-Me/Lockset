@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -7,18 +8,40 @@ use lockset_core::{Custody, CustodyKind, Error, Result, SecretKey};
 /// persisted by this process.
 pub struct EnvCustody {
     var: String,
+    /// The variables the caller injected; `None` reads the process, which is
+    /// only what a CLI run does.
+    environment: Option<Vec<(OsString, OsString)>>,
 }
 
 impl EnvCustody {
     pub fn new(var: impl Into<String>) -> Self {
-        Self { var: var.into() }
+        Self {
+            var: var.into(),
+            environment: None,
+        }
+    }
+
+    /// Read from these variables instead of the process environment.
+    pub fn with_environment(mut self, environment: Vec<(OsString, OsString)>) -> Self {
+        self.environment = Some(environment);
+        self
+    }
+
+    fn value(&self) -> Option<String> {
+        match &self.environment {
+            Some(vars) => vars
+                .iter()
+                .find(|(name, _)| name == &OsString::from(&self.var))
+                .map(|(_, value)| value.to_string_lossy().into_owned()),
+            None => std::env::var(&self.var).ok(),
+        }
     }
 }
 
 impl Custody for EnvCustody {
     fn get(&self) -> Result<Option<SecretKey>> {
-        match std::env::var(&self.var) {
-            Ok(value) if !value.trim().is_empty() => Ok(Some(SecretKey::from_text(&value)?)),
+        match self.value() {
+            Some(value) if !value.trim().is_empty() => Ok(Some(SecretKey::from_text(&value)?)),
             _ => Ok(None),
         }
     }

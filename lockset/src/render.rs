@@ -162,28 +162,23 @@ pub fn check(report: &CheckReport) -> String {
     join(lines)
 }
 
-/// Print the plan. `--json` prints the plan document; otherwise notes and
-/// warnings go to stderr so stdout carries only the plan itself.
-pub fn plan(plan: &Plan, dry_run: bool, json: bool) -> Result<()> {
+/// The plan body. `--json` serializes the plan document; otherwise the dry-run
+/// lines. Notes and warnings travel with the plan, and the caller emits them on
+/// stderr so stdout carries only the plan itself.
+pub fn plan(plan: &Plan, dry_run: bool, json: bool) -> Result<String> {
     if json {
-        println!("{}", self::json(&PlanDocument::new(plan))?);
-        return Ok(());
+        return Ok(format!("{}\n", self::json(&PlanDocument::new(plan))?));
     }
-    for note in &plan.notes {
-        log::info!("{note}");
-    }
-    for warning in &plan.warnings {
-        log::warn!("{warning}");
-    }
+    let mut out = String::new();
     if dry_run {
         if plan.changes.is_empty() {
-            println!("nothing to do");
+            out.push_str("nothing to do\n");
         }
         for item in &plan.changes {
-            println!("would {}", describe(item));
+            out.push_str(&format!("would {}\n", describe(item)));
         }
     }
-    Ok(())
+    Ok(out)
 }
 
 /// A `lockset.toml` fragment listing the identities the `.sops.yaml` comments

@@ -59,6 +59,16 @@
 
 ### Added
 
+- **`lockset` is usable as a library.** `lockset::run(cli, &inputs, out, err)`
+  runs the same handlers as the binary and returns the exit code; `Inputs`
+  carries the variables, working directory, stdin, and terminal state, and both
+  streams are caller-provided writers. `run_with_context` takes ports the
+  caller built (codec, custody, repository), and `main` is now only parse →
+  run → exit code.
+- Diagnostics are explicit: `--quiet`/`--verbose`/`RUST_LOG` resolve to a level
+  from the injected inputs, notes and warnings travel with the plan to the
+  caller's stderr, and `log`/`env_logger` are no longer dependencies.
+
 - Custody forms: `--custody env:<NAME>` reads a named variable, so two
   pipelines on one machine can keep distinct sources, and `LOCKSET_CUSTODY`
   selects custody from the environment (the flag still wins; an empty value is
@@ -101,6 +111,11 @@
   it now writes the configured path, like `grant`.
 
 ### Changed
+
+- The adapters take the environment they run with instead of reading the
+  process: `SopsCodec` and `EnvCustody` each gained `with_environment`, and the
+  wiring resolves `LOCKSET_*`, `USER`, the working directory, and the terminal
+  from `Inputs`.
 
 - Payload discovery walks the repository and keeps what `repo.payload_globs`
   matches, so conventions outside `secrets/**` need no code change; the admin

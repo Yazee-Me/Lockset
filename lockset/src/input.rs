@@ -1,10 +1,11 @@
-use std::io::{IsTerminal, Read};
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use lockset_core::SecretKey;
 use zeroize::Zeroizing;
 
+use crate::inputs::{Inputs, Stdin};
 use crate::usage;
 
 /// Where `set` takes the value from. Exactly one source is chosen by the
@@ -20,15 +21,18 @@ pub struct ValueSource<'a> {
 
 /// A dotenv value from the chosen source. Trailing newlines are dropped;
 /// embedded lines are refused, and an empty value needs `allow_empty`.
-pub fn read_value(source: &ValueSource<'_>) -> Result<Zeroizing<String>> {
+pub fn read_value(source: &ValueSource<'_>, inputs: &Inputs) -> Result<Zeroizing<String>> {
     let raw = if let Some(name) = source.from_env {
-        std::env::var(name).map_err(|_| usage::error(format!("{name} is not set")))?
+        inputs
+            .var(name)
+            .map(str::to_owned)
+            .ok_or_else(|| usage::error(format!("{name} is not set")))?
     } else if let Some(path) = source.file {
         std::fs::read_to_string(path)
             .map_err(|error| usage::error(format!("cannot read {}: {error}", path.display())))?
     } else if source.stdin {
-        read_stdin()?
-    } else if std::io::stdin().is_terminal() {
+        inputs.read_stdin()?
+    } else if inputs.is_interactive() {
         rpassword::prompt_password("value (input hidden): ").context("cannot read the value")?
     } else {
         return Err(usage::error(
@@ -48,31 +52,23 @@ pub fn read_value(source: &ValueSource<'_>) -> Result<Zeroizing<String>> {
     Ok(Zeroizing::new(value))
 }
 
-fn read_stdin() -> Result<String> {
-    let mut buffer = String::new();
-    std::io::stdin()
-        .read_to_string(&mut buffer)
-        .context("cannot read stdin")?;
-    Ok(buffer)
-}
-
 /// Read a private key without it ever reaching argv or shell history.
 pub fn read_key(
     file: Option<&Path>,
     stdin_flag: bool,
     from_env: Option<&str>,
+    inputs: &Inputs,
 ) -> Result<SecretKey> {
     let text = if let Some(path) = file {
         std::fs::read_to_string(path)
             .map_err(|error| usage::error(format!("cannot read {}: {error}", path.display())))?
     } else if let Some(name) = from_env {
-        std::env::var(name).map_err(|_| usage::error(format!("{name} is not set")))?
-    } else if stdin_flag || !std::io::stdin().is_terminal() {
-        let mut buffer = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buffer)
-            .context("cannot read stdin")?;
-        buffer
+        inputs
+            .var(name)
+            .map(str::to_owned)
+            .ok_or_else(|| usage::error(format!("{name} is not set")))?
+    } else if stdin_flag || !inputs.is_interactive() {
+        inputs.read_stdin()?
     } else {
         rpassword::prompt_password("paste the age private key (input hidden): ")
             .context("cannot read the pasted key")?
@@ -81,12 +77,20 @@ pub fn read_key(
     SecretKey::from_text(&text).map_err(Into::into)
 }
 
-pub fn confirm(question: &str) -> Result<bool> {
-    use std::io::Write;
-    print!("{question} [y/N] ");
-    std::io::stdout().flush().ok();
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
+/// Ask a yes/no question. Supplied stdin text answers it; closed stdin means no
+/// (the old EOF behaviour), and only an inherited stdin prompts.
+pub fn confirm(question: &str, inputs: &Inputs, out: &mut dyn Write) -> Result<bool> {
+    let answer = match inputs.stdin() {
+        Stdin::Text(text) => text.clone(),
+        Stdin::Closed => return Ok(false),
+        Stdin::Inherited => {
+            let _ = write!(out, "{question} [y/N] ");
+            let _ = out.flush();
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            answer
+        }
+    };
     Ok(matches!(
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
@@ -122,12 +126,15 @@ mod tests {
     }
 
     fn from_file(path: &Path, allow_empty: bool) -> Result<Zeroizing<String>> {
-        read_value(&ValueSource {
-            stdin: false,
-            from_env: None,
-            file: Some(path),
-            allow_empty,
-        })
+        read_value(
+            &ValueSource {
+                stdin: false,
+                from_env: None,
+                file: Some(path),
+                allow_empty,
+            },
+            &Inputs::default(),
+        )
     }
 
     #[test]
@@ -155,17 +162,30 @@ mod tests {
 
     #[test]
     fn an_environment_variable_is_a_source() {
-        std::env::set_var("LOCKSET_TEST_VALUE", "from-env\n");
         let source = ValueSource {
             stdin: false,
             from_env: Some("LOCKSET_TEST_VALUE"),
             file: None,
             allow_empty: false,
         };
-        let value = read_value(&source).unwrap();
-        std::env::remove_var("LOCKSET_TEST_VALUE");
+        let inputs = Inputs::default().with_var("LOCKSET_TEST_VALUE", "from-env\n");
+
+        let value = read_value(&source, &inputs).unwrap();
 
         assert_eq!(value.as_str(), "from-env");
+    }
+
+    #[test]
+    fn supplied_stdin_stands_in_for_a_pipe() {
+        let source = ValueSource {
+            stdin: true,
+            from_env: None,
+            file: None,
+            allow_empty: false,
+        };
+        let inputs = Inputs::default().with_stdin(Stdin::Text("piped\n".into()));
+
+        assert_eq!(read_value(&source, &inputs).unwrap().as_str(), "piped");
     }
 
     #[test]
@@ -177,7 +197,7 @@ mod tests {
             allow_empty: false,
         };
 
-        let error = read_value(&source).unwrap_err();
+        let error = read_value(&source, &Inputs::default()).unwrap_err();
         assert!(error.to_string().contains("is not set"), "{error}");
     }
 }

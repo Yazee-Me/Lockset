@@ -1350,6 +1350,7 @@ dependencies = [
  "lockset-core",
  "lockset-tools",
  "rpassword",
+ "serde_json",
  "zeroize",
 ]
 
@@ -1361,6 +1362,7 @@ dependencies = [
  "regex",
  "secrecy",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
  "thiserror 2.0.21",
  "zeroize",

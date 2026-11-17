@@ -1,8 +1,43 @@
+use std::fmt;
+
+use serde::{Serialize, Serializer};
+use zeroize::Zeroizing;
+
 use crate::model::{CustodyKind, PathId};
+
+/// A secret value carried by a plan. It prints and serializes as redacted and
+/// zeroizes its buffer when dropped, so a plan can be logged, debugged, or
+/// turned into JSON without carrying the plaintext.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretValue(Zeroizing<String>);
+
+impl SecretValue {
+    pub fn new(value: Zeroizing<String>) -> Self {
+        Self(value)
+    }
+
+    /// The only way to reach the plaintext: hand it to the codec.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
+
+impl Serialize for SecretValue {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_none()
+    }
+}
 
 /// One unit of work the caller executes through a port. The core never
 /// performs I/O itself, so `--dry-run` and tests share the same path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Change {
     WriteFile {
         path: PathId,
@@ -14,12 +49,12 @@ pub enum Change {
     RotateDataKey {
         payload: PathId,
     },
-    /// One value, written through the codec. The value is secret material and
-    /// must never be rendered by `describe`/`Display`.
+    /// One value, written through the codec. The value is secret material: it
+    /// is redacted in `Debug` and serialized as `null`.
     SetValue {
         payload: PathId,
         name: String,
-        value: String,
+        value: SecretValue,
     },
     StoreKey {
         custody: CustodyKind,
@@ -29,7 +64,7 @@ pub enum Change {
     },
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Plan {
     pub changes: Vec<Change>,
     pub notes: Vec<String>,
@@ -51,5 +86,44 @@ impl Plan {
 
     pub fn warn(&mut self, warning: impl Into<String>) {
         self.warnings.push(warning.into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan_with_value(value: &str) -> Plan {
+        let mut plan = Plan::default();
+        plan.push(Change::SetValue {
+            payload: PathId::parse("secrets/dev.env").unwrap(),
+            name: "TOKEN".to_owned(),
+            value: SecretValue::new(Zeroizing::new(value.to_owned())),
+        });
+        plan
+    }
+
+    #[test]
+    fn debug_never_shows_the_value() {
+        let plan = plan_with_value("hunter2");
+
+        let debug = format!("{plan:?}");
+
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(debug.contains("TOKEN"), "{debug}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+    }
+
+    #[test]
+    fn json_names_the_key_but_not_the_value() {
+        let plan = plan_with_value("hunter2");
+
+        let json = serde_json::to_value(&plan).unwrap();
+
+        assert_eq!(json["changes"][0]["type"], "set_value");
+        assert_eq!(json["changes"][0]["payload"], "secrets/dev.env");
+        assert_eq!(json["changes"][0]["name"], "TOKEN");
+        assert_eq!(json["changes"][0]["value"], serde_json::Value::Null);
+        assert!(!json.to_string().contains("hunter2"), "{json}");
     }
 }

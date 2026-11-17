@@ -1,6 +1,14 @@
+use anyhow::{Context, Result};
 use lockset_core::{Change, Plan};
 
-pub fn plan(plan: &Plan, dry_run: bool) {
+/// Print the plan. `--json` prints the plan itself; the caller validates that
+/// it asked for a dry run of a command that builds one.
+pub fn plan(plan: &Plan, dry_run: bool, json: bool) -> Result<()> {
+    if json {
+        let text = serde_json::to_string_pretty(plan).context("cannot encode the plan as JSON")?;
+        println!("{text}");
+        return Ok(());
+    }
     for note in &plan.notes {
         println!("{note}");
     }
@@ -15,6 +23,7 @@ pub fn plan(plan: &Plan, dry_run: bool) {
             println!("would {}", describe(item));
         }
     }
+    Ok(())
 }
 
 pub fn describe(item: &Change) -> String {

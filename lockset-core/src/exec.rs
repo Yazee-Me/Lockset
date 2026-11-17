@@ -32,7 +32,7 @@ pub fn apply(
                 name,
                 value,
             } => {
-                codec.set_value(payload, name, value, key)?;
+                codec.set_value(payload, name, value.expose(), key)?;
                 log.push(format!("set {name} in {payload}"));
             }
             Change::StoreKey { custody: kind } => {

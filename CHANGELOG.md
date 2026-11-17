@@ -50,6 +50,12 @@
   file is created with mode 0600 through the open options instead of being
   chmodded after the secret was written.
 
+- Plan values are redacted and zeroized: `Change::SetValue` holds a
+  `SecretValue` that prints as `<redacted>`, serializes as `null`, and zeroes its
+  buffer when the plan is dropped, so `Debug` and plan JSON cannot reveal it.
+  `--dry-run --json` prints the redacted plan; `--json` needs `--dry-run` and is
+  not available on the report commands.
+
 ### Fixed
 
 - `--custody` fails closed: an unknown form exits 2 and lists `env`, `keyring`,

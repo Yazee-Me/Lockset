@@ -65,6 +65,7 @@ lockset set NEW_KEY --payload secrets/dev.env      # hidden prompt
 printf '%s' "$NEW_KEY" | lockset set NEW_KEY --payload secrets/dev.env --stdin
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY
 lockset set NEW_KEY --payload secrets/dev.env --value-file /run/secrets/new-key
+lockset --dry-run --json set NEW_KEY --payload secrets/dev.env   # plan as JSON, value redacted
 lockset grant age1... --label dev-alice
 ```
 
@@ -110,6 +111,10 @@ mise run install     # link target/release/lockset into ~/.local/bin
   private: the path is resolved through symlinks before that check, symlinks
   and non-regular files are refused, and a key file must be 0600 or stricter.
   New files are created with mode 0600, never written first and chmodded after.
+- Plans carry a value as a redacted `SecretValue`: `{:?}` prints `<redacted>`,
+  `--json` emits `"value": null`, and the buffer is zeroized when the plan is
+  dropped. `--json` describes a plan, so it requires `--dry-run` and is not
+  available on the report commands.
 - `key import` never puts the identity in an argument list: on macOS the
   keychain write asks `security(1)` to prompt for it, so `ps` cannot show it to
   a same-user process. A non-interactive run refuses to store it and points at

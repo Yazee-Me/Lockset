@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use anyhow::{bail, Result};
 use clap::Parser;
 use lockset_core::ops::{self, Check, GrantRequest, RevokeRequest, RevokeTarget};
-use lockset_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretKey};
+use lockset_core::{exec, Change, Codec, Label, PathId, Plan, PubKey, SecretKey, SecretValue};
 
 use crate::cli::{Cli, Command, KeyCommand, PersonCommand};
 
@@ -28,6 +28,29 @@ fn payload_list(list: &str) -> Result<Vec<PathId>> {
         .collect()
 }
 
+/// Whether to print the plan as JSON. JSON describes a plan, so it needs a dry
+/// run and a command that builds one; anything else is a usage error rather
+/// than a flag that quietly does nothing.
+fn plan_json(cli: &Cli) -> Result<bool> {
+    if !cli.json {
+        return Ok(false);
+    }
+    if !cli.dry_run {
+        return Err(usage::error("--json prints a plan; pass --dry-run with it"));
+    }
+    match &cli.command {
+        Command::Set { .. }
+        | Command::Rotate { .. }
+        | Command::Person { .. }
+        | Command::Grant { .. }
+        | Command::Revoke { .. }
+        | Command::Key { .. } => Ok(true),
+        Command::Status | Command::Who | Command::Check | Command::Run { .. } => Err(usage::error(
+            "--json prints plans; this command has no JSON output",
+        )),
+    }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
@@ -40,6 +63,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<u8> {
     let cli = Cli::parse();
+    plan_json(&cli)?;
     let context = wiring::Context::detect(&cli)?;
 
     match &cli.command {
@@ -235,7 +259,7 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
                 custody: context.custody.kind(),
             });
             if cli.dry_run {
-                render::plan(&plan, true);
+                render::plan(&plan, true, cli.json)?;
                 return Ok(0);
             }
             exec::apply(
@@ -322,7 +346,7 @@ fn key(context: &wiring::Context, cli: &Cli, command: &KeyCommand) -> Result<u8>
                 custody: context.custody.kind(),
             });
             if cli.dry_run {
-                render::plan(&plan, true);
+                render::plan(&plan, true, cli.json)?;
                 return Ok(0);
             }
             exec::apply(
@@ -360,10 +384,10 @@ fn set(
     plan.push(Change::SetValue {
         payload: id.clone(),
         name: name.to_owned(),
-        value: value.to_string(),
+        value: SecretValue::new(value),
     });
     if cli.dry_run {
-        render::plan(&plan, true);
+        render::plan(&plan, true, cli.json)?;
         return Ok(0);
     }
     for line in exec::apply(
@@ -424,7 +448,7 @@ fn person(context: &wiring::Context, cli: &Cli, command: &PersonCommand) -> Resu
                     only,
                 },
             )?;
-            render::plan(&plan, cli.dry_run);
+            render::plan(&plan, cli.dry_run, cli.json)?;
             if cli.dry_run || plan.is_empty() {
                 return Ok(0);
             }
@@ -531,7 +555,7 @@ fn revoke(
 }
 
 fn finish(context: &wiring::Context, cli: &Cli, plan: Plan, key: &SecretKey) -> Result<u8> {
-    render::plan(&plan, cli.dry_run);
+    render::plan(&plan, cli.dry_run, cli.json)?;
     if cli.dry_run || plan.is_empty() {
         return Ok(0);
     }

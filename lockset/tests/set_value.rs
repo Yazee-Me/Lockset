@@ -225,3 +225,72 @@ fn a_value_file_that_cannot_be_read_is_an_error() {
     assert_eq!(output.status.code(), Some(1), "{stderr}");
     assert_eq!(repo.read("secrets/dev.env"), "TOKEN=old\n");
 }
+
+#[test]
+fn a_json_dry_run_names_the_key_but_never_the_value() {
+    let repo = repo_with_payload("json");
+    let key = identity();
+
+    let output = lockset_with(
+        &repo,
+        &strings(&[
+            "--json",
+            "--dry-run",
+            "set",
+            "TOKEN",
+            "--payload",
+            "secrets/dev.env",
+            "--stdin",
+        ]),
+        &[("LOCKSET_AGE_KEY", &key)],
+        Some("hunter2"),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("\"type\": \"set_value\""), "{stdout}");
+    assert!(
+        stdout.contains("\"payload\": \"secrets/dev.env\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"name\": \"TOKEN\""), "{stdout}");
+    assert!(stdout.contains("\"value\": null"), "{stdout}");
+    assert!(!stdout.contains("hunter2"), "the value leaked: {stdout}");
+    assert_eq!(repo.read("secrets/dev.env"), "TOKEN=old\n");
+}
+
+#[test]
+fn json_without_a_dry_run_is_a_usage_error() {
+    let repo = repo_with_payload("json-live");
+    let key = identity();
+
+    let output = lockset_with(
+        &repo,
+        &strings(&[
+            "set",
+            "TOKEN",
+            "--payload",
+            "secrets/dev.env",
+            "--stdin",
+            "--json",
+        ]),
+        &[("LOCKSET_AGE_KEY", &key)],
+        Some("hunter2"),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--dry-run"), "{stderr}");
+    assert_eq!(repo.read("secrets/dev.env"), "TOKEN=old\n");
+}
+
+#[test]
+fn a_report_has_no_json_output() {
+    let repo = Repo::new("json-report");
+
+    let output = lockset(&repo, &strings(&["status", "--json", "--dry-run"]));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("no JSON output"), "{stderr}");
+}

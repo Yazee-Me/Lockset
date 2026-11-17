@@ -2,6 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use secrecy::{ExposeSecret, SecretString};
+use serde::Serialize;
 
 use crate::{Error, Result};
 
@@ -168,7 +169,7 @@ fn truncate(s: &str) -> String {
 /// `parse` is the only constructor, so every `Repo` and `Codec` call receives a
 /// path that stays inside the repository and that an external tool cannot read
 /// as an option.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct PathId(String);
 
 impl PathId {
@@ -208,7 +209,8 @@ impl fmt::Display for PathId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CustodyKind {
     Keyring,
     Env,

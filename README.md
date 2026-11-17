@@ -86,6 +86,10 @@ mise run install     # link target/release/lockset into ~/.local/bin
 - The private key reaches sops as `SOPS_AGE_KEY`, and the sops child starts
   without the parent's identity or any other `SOPS_*` variable, so no inherited
   override can redirect it. The key never reaches argv or a file.
+- `key import` never puts the identity in an argument list: on macOS the
+  keychain write asks `security(1)` to prompt for it, so `ps` cannot show it to
+  a same-user process. A non-interactive run refuses to store it and points at
+  `--custody env` or `--custody file:<path>`, which need no prompt.
 - Revoking a recipient rotates the data key, which bounds future exposure. It
   cannot erase ciphertext already in git history or plaintext already copied.
 

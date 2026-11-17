@@ -27,3 +27,8 @@
   an identity file. `sops` also starts from the scrubbed environment, with
   `SOPS_AGE_KEY` as its only key source, so an inherited `SOPS_AGE_KEY_FILE` or
   `SOPS_AGE_KEY_CMD` can no longer redirect it.
+- `lockset key import` no longer passes the private key to `security(1)` as an
+  argument: on macOS `security` prompts for it, so `ps` cannot show it to a
+  same-user process. A non-interactive run refuses the keychain instead of
+  leaking the key, and points at `--custody env` or `--custody file:<path>`;
+  keychain lookup and delete now match the account as well as the service.

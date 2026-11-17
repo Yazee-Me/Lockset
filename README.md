@@ -106,6 +106,24 @@ mise run build       # release build of the CLI
 mise run install     # link target/release/lockset into ~/.local/bin
 ```
 
+Beyond the gate, the suite pins the behavior that matters:
+
+- `lockset/tests/sops_contract.rs` runs a fake `sops` on `PATH` that records
+  every argv and environment; it proves the identity never reaches argv, the
+  sops child never inherits `LOCKSET_AGE_KEY` or a `SOPS_*` override, and each
+  operation's argv shape (`-d`, `set --value-stdin`, `updatekeys -y`,
+  `rotate -i`).
+- `lockset/tests/revoke.rs` covers self-revoke refusal (exit 2, nothing
+  written), `--force`, revoking another identity, and a failed apply that
+  restores the map and every payload it had already touched.
+- `lockset/tests/locking.rs` races two grants and proves a held lock is a
+  conflict with nothing written.
+- `lockset-core/tests/parsers.rs` holds property tests (proptest) for path
+  canonicalization, dotenv names/values, sops-config no-op rendering, and the
+  config parser; `fuzz/` holds libFuzzer targets for the same parsers, run in
+  CI on every parser change and nightly (`mise run fuzz` locally).
+- `.github/dependabot.yml` opens grouped cargo and GitHub Actions updates.
+
 CI runs the same commands: the test matrix covers Linux, macOS, and Windows
 with `--locked`, a lint job runs formatting, clippy, and docs, a supply-chain
 job runs `cargo deny check` and `cargo audit`, and the end-to-end job runs

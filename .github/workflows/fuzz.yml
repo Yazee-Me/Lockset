@@ -1,0 +1,46 @@
+name: Fuzz
+
+# Parser fuzzing: libFuzzer targets for the input-heavy parsers, a bounded run
+# on every pull request that touches them and the paths, and a nightly sweep.
+on:
+  pull_request:
+    paths:
+      - "lockset-core/src/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [path_id, sopsfile, dotenv, config]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz"
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Run ${{ matrix.target }}
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=120 -rss_limit_mb=2048
+      - name: Keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: fuzz/artifacts
+          if-no-files-found: ignore

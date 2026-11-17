@@ -60,6 +60,14 @@ run = "cargo audit"
 description = "End-to-end against the pinned sops and age (no shims)"
 run = "LOCKSET_E2E=1 cargo test -p lockset --test e2e --locked"
 
+[tasks.fuzz]
+description = "Fuzz the parsers (needs `rustup toolchain install nightly` and cargo-fuzz)"
+run = """
+for target in path_id sopsfile dotenv config; do
+  cargo +nightly fuzz run "$target" -- -max_total_time=60 || exit 1
+done
+"""
+
 [tasks.check]
 description = "Everything CI gates on: tests, lint, e2e, deny, audit"
 depends = ["test", "lint", "e2e", "deny", "audit"]

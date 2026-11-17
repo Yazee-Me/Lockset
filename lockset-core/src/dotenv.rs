@@ -3,7 +3,11 @@
 pub fn parse(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
-        let line = line.trim();
+        // `lines()` strips `\r\n` but keeps a lone trailing `\r` at the end of
+        // the input; treat it as the line ending it is (CRLF files, CR-terminated
+        // last lines). An embedded CR stays in the value: it cannot start a new
+        // line in an environment file, and `set` refuses to create one.
+        let line = line.trim_end_matches('\r').trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
@@ -21,6 +25,14 @@ pub fn parse(text: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crlf_and_a_lone_trailing_cr_are_line_endings() {
+        assert_eq!(
+            parse("A=1\r\nB=2\r"),
+            vec![("A".into(), "1".into()), ("B".into(), "2".into())]
+        );
+    }
 
     #[test]
     fn parses_pairs_and_skips_noise() {

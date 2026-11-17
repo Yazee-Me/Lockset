@@ -61,6 +61,17 @@
 
 ### Added
 
+- **The security boundary and the rollback path are pinned by tests.** A fake
+  `sops` on `PATH` records every argv and environment and proves the identity
+  never reaches argv and the sops child inherits neither `LOCKSET_AGE_KEY` nor a
+  `SOPS_*` override; new revoke tests cover self-revoke refusal and `--force`,
+  and a failed apply restores the map and every payload it touched. Parser
+  property tests (proptest) and libFuzzer targets (path ids, sops config,
+  dotenv, `lockset.toml`) run in CI, with a nightly fuzz sweep; fuzzing found
+  and fixed a lone trailing `\r` being kept in the last dotenv value.
+- `.github/dependabot.yml` groups weekly cargo and GitHub Actions updates and
+  monthly updates for the detached fuzz crate.
+
 - **CI is a full matrix with pinned tools.** The workspace tests run on Ubuntu,
   macOS, and Windows with `--locked` and a dependency cache; a lint job runs
   `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and

@@ -4,3 +4,4 @@ target
 scripts
 dist-workspace.toml
 *.md
+fuzz

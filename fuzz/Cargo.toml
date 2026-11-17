@@ -1,0 +1,41 @@
+# Separate workspace: `cargo fuzz` builds with a nightly toolchain and its own
+# lockfile, so it never interferes with the main workspace's pinned `--locked`
+# builds. CI runs these targets; see .github/workflows/fuzz.yml.
+[package]
+name = "lockset-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+lockset-core = { path = "../lockset-core" }
+
+[[bin]]
+name = "path_id"
+path = "fuzz_targets/path_id.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sopsfile"
+path = "fuzz_targets/sopsfile.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "dotenv"
+path = "fuzz_targets/dotenv.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+
+[workspace]

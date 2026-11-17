@@ -22,3 +22,18 @@ run = "cargo build --quiet --release && mkdir -p \"$HOME/.local/bin\" && ln -sf 
 [tasks.run]
 description = "Run the CLI: mise run run -- status"
 run = "cargo run --quiet --release --bin lockset -- \"$@\""
+
+# Releases use cargo-dist (`cargo install cargo-dist` or the installer in the
+# README). `plan` shows what a tag would publish, without building.
+
+[tasks."release:plan"]
+description = "What a tag would release (cargo-dist manifest)"
+run = "dist plan"
+
+[tasks."release:build"]
+description = "Build the local-platform release artifacts"
+run = "dist build --artifacts=local"
+
+[tasks."release:verify"]
+description = "Verify target/distrib: checksums, unpack, run the binary"
+run = "./scripts/verify-artifacts.sh target/distrib"

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-11-17
+
 ### Breaking changes
 
 - **Identity and sops lookup use the Lockset names only.** The private key is
@@ -58,6 +60,18 @@
   identity even for `--dry-run`.
 
 ### Added
+
+- **A tag releases installable binaries with provenance.** `v<version>` runs
+  the cargo-dist workflow: Linux x86_64/aarch64 (gnu and musl), macOS
+  x86_64/aarch64, and Windows x86_64 archives, each with a `.sha256`, plus shell
+  and PowerShell installers and GitHub artifact attestations (SLSA provenance,
+  `gh attestation verify`). A release-assets workflow adds the combined
+  `SHA256SUMS`, optional minisign signatures when `MINISIGN_SECRET_KEY` is set,
+  and re-verifies every artifact on clean Linux, macOS, and Windows runners.
+  The release body is the matching `CHANGELOG.md` section, and CI refuses a
+  version whose section does not document the breaking change.
+- `dist-workspace.toml`, a `dist` build profile, and
+  `mise run release:{plan,build,verify}` make the pipeline reproducible locally.
 
 - **Paths accept both separators and reject ambiguous forms.** `secrets\dev.env`
   parses to `secrets/dev.env` (payload paths, `repo.sops_config`, and

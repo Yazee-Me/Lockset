@@ -1,0 +1,26 @@
+[workspace]
+members = ["cargo:."]
+
+# cargo-dist: the release pipeline. `dist generate` writes the GitHub workflow;
+# `dist plan` shows what a tag would produce. Targets follow the support matrix
+# in LS-30; installers are the self-contained shell/powershell scripts, which
+# need no extra hosting (a Homebrew tap is deliberately not configured: it needs
+# a `homebrew-tap` repository, see README "Releases").
+[dist]
+cargo-dist-version = "0.34.0"
+ci = ["github"]
+installers = ["shell", "powershell"]
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-gnu",
+  "aarch64-unknown-linux-musl",
+]
+checksum = "sha256"
+# GitHub attestations are the SLSA provenance for every uploaded artifact.
+github-attestations = true
+# A tag run is the release; PRs keep running the ordinary CI only.
+pr-run-mode = "skip"

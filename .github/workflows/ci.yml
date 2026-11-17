@@ -29,6 +29,20 @@ jobs:
           esac
       - name: Test the workspace
         run: mise run test
+      - name: Release notes carry the breaking change
+        # A release must document the legacy identity/sops rename for its own
+        # version; cargo-dist builds the GitHub release body from CHANGELOG.md.
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/axodotdev/cargo-dist/releases/download/v0.34.0/cargo-dist-installer.sh | sh
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="lockset") | .version')
+          body=$(dist plan --tag="v$version" --output-format=json | jq -r '.announcement_github_body // ""')
+          printf '%s\n' "$body" | grep -q 'Breaking changes' \
+            || { echo "release notes for v$version have no Breaking changes section" >&2; exit 1; }
+          printf '%s\n' "$body" | grep -q 'Identity and sops lookup' \
+            || { echo "release notes for v$version do not document the identity/sops rename" >&2; exit 1; }
 
   portability:
     name: Supported targets

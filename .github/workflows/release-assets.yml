@@ -1,0 +1,134 @@
+name: Release assets and verification
+
+# Runs after the release workflow has published a release: adds the combined
+# SHA256SUMS file and, when the repository has a MINISIGN_SECRET_KEY secret,
+# minisign signatures. Then verifies the release on clean runners: every
+# published checksum, unpacked archives, and the binary itself.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
+jobs:
+  extras:
+    name: SHA256SUMS and optional signatures
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download the release assets
+        run: |
+          mkdir -p assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          ls -l assets
+      - name: Build the combined SHA256SUMS
+        run: |
+          # The published .sha256 files name their archive; keep the digest and
+          # the file name, and drop cargo-dist's binary marker so the result is
+          # `sha256sum -c` and `shasum -a 256 -c` compatible.
+          : > SHA256SUMS
+          for sum in assets/*.sha256; do
+            awk '{ name = $2; sub(/^\*/, "", name); print $1 "  " name }' "$sum" >> SHA256SUMS
+          done
+          test -s SHA256SUMS
+          cat SHA256SUMS
+      - name: Upload SHA256SUMS
+        run: gh release upload "$TAG" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Check for the signing key
+        id: key
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -n "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+            chmod 600 "$RUNNER_TEMP/minisign.key"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "no MINISIGN_SECRET_KEY secret: publishing unsigned (checksums and"
+            echo "GitHub artifact attestations still cover every file)"
+          fi
+      - name: Install minisign
+        if: steps.key.outputs.present == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+      - name: Sign the release archives
+        if: steps.key.outputs.present == 'true'
+        env:
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          for file in assets/*.tar.xz assets/*.zip; do
+            [ -e "$file" ] || continue
+            minisign -Sm "$file" -s "$RUNNER_TEMP/minisign.key" -p "" \
+              || { echo "minisign refused to sign $file" >&2; exit 1; }
+            gh release upload "$TAG" "$file.minisig" --repo "$GITHUB_REPOSITORY" --clobber
+          done
+      - name: Remove the key material
+        if: always() && steps.key.outputs.present == 'true'
+        run: rm -f "$RUNNER_TEMP/minisign.key"
+
+  verify:
+    name: verify on ${{ matrix.os }}
+    needs: extras
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the release assets
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts
+      - name: Verify checksums, unpack, run (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./scripts/verify-artifacts.sh artifacts
+      - name: Verify checksums, unpack, run (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $verified = 0
+          Get-ChildItem artifacts -Filter *.sha256 | ForEach-Object {
+            $parts = (Get-Content $_.FullName) -split '\s+' | Where-Object { $_ }
+            $expected = $parts[0]
+            $name = $parts[1].TrimStart('*')
+            $file = Join-Path "artifacts" $name
+            if (-not (Test-Path $file)) { throw "checksum names a missing file: $name" }
+            $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected.ToLower()) { throw "checksum mismatch: $name" }
+            Write-Host "$name: OK"
+            $verified++
+          }
+          if ($verified -eq 0) { throw "no checksums in artifacts" }
+          if (Test-Path artifacts/SHA256SUMS) {
+            Get-Content artifacts/SHA256SUMS | ForEach-Object {
+              $expected, $name = $_ -split '\s+', 2
+              $file = Join-Path "artifacts" $name.Trim()
+              $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+              if ($actual -ne $expected.ToLower()) { throw "SHA256SUMS mismatch: $name" }
+            }
+            Write-Host "SHA256SUMS: OK"
+          }
+          Get-ChildItem artifacts -Filter *.zip | ForEach-Object {
+            Expand-Archive $_.FullName -DestinationPath unpacked -Force
+          }
+          $binary = Get-ChildItem unpacked -Recurse -Filter lockset.exe | Select-Object -First 1
+          if (-not $binary) { throw "no lockset.exe in the release" }
+          & $binary.FullName --version
+          if ($LASTEXITCODE -ne 0) { throw "lockset --version failed" }

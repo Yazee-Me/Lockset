@@ -6,6 +6,8 @@ members = ["lockset-core", "lockset-tools", "lockset"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/Yazee-Me/Lockset"
+homepage = "https://github.com/Yazee-Me/Lockset"
 
 [workspace.dependencies]
 age = "0.12"
@@ -20,3 +22,6 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 rpassword = "7"
 keyring = { version = "4", features = ["v1"] }
+
+[profile.dist]
+inherits = "release"

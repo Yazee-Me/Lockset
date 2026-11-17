@@ -3,6 +3,8 @@ name = "lockset-tools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Tool and OS bindings for Lockset: filesystem, sops, keychain"
 
 [features]

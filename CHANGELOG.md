@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Internal
+
+- The agent context (`AGENTS.md` and `.agents/skills/`) is generated from the
+  shared `Yazee-Me/Playbook` package and checked in CI.
+
 ## 0.1.0 - 2026-11-17
 
 ### Breaking changes

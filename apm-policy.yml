@@ -1,0 +1,7 @@
+name: "Lockset agent context policy"
+version: "1.0.0"
+enforcement: block
+
+dependencies:
+  allow:
+    - "Yazee-Me/Playbook"

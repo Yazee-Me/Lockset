@@ -1,0 +1,43 @@
+name: Agent context
+
+# APM resolves the pinned Yazee-Me/Playbook package and regenerates AGENTS.md
+# and .agents/skills/. The gate fails when the committed output drifts from the
+# lockfile or from Playbook, or when the dependency policy is violated.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: APM lockfile · deployed context
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # APM_PAT is a fine-grained PAT with Contents:read on Yazee-Me/Playbook.
+      # Add it under Settings -> Secrets and variables -> Actions.
+      - uses: microsoft/apm-action@v1
+        with:
+          setup-only: true
+          apm-version: "0.35.1"
+          github-token: ${{ secrets.APM_PAT }}
+
+      - name: Resolve the pinned context
+        run: apm install --frozen
+        env:
+          GITHUB_APM_PAT: ${{ secrets.APM_PAT }}
+
+      - name: Regenerate the context
+        run: apm compile
+
+      - name: Verify the generated context is committed
+        run: test -z "$(git status --porcelain --untracked-files=all -- AGENTS.md .agents .opencode apm.lock.yaml)"
+
+      - name: Audit the context
+        run: apm audit --ci --policy ./apm-policy.yml
+        env:
+          GITHUB_APM_PAT: ${{ secrets.APM_PAT }}

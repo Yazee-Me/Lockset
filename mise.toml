@@ -4,6 +4,10 @@
 rust = "1.99.1"
 sops = "3.13.3"
 age = "1.3.2"
+# Resolves and audits the shared agent context in `.agents/` and `AGENTS.md`.
+# Pinned to the version Playbook renders with, so the committed output is
+# reproducible; bump it together with the Playbook pin.
+apm = "0.35.1"
 
 [tasks.default]
 description = "Gate: the workspace tests"
@@ -71,3 +75,85 @@ done
 [tasks.check]
 description = "Everything CI gates on: tests, lint, e2e, deny, audit"
 depends = ["test", "lint", "e2e", "deny", "audit"]
+
+# ── Agent context ───────────────────────────────────────────────────────────
+
+[tasks."agent:sync"]
+description = "Resolve the pinned Playbook package and regenerate AGENTS.md"
+run = "apm install --frozen && apm compile"
+
+[tasks."agent:check"]
+description = "Verify the committed agent context matches the lockfile and Playbook"
+run = """
+apm install --frozen
+apm compile
+test -z "$(git status --porcelain --untracked-files=all -- AGENTS.md .agents .opencode apm.lock.yaml)"
+apm audit --ci --policy ./apm-policy.yml
+"""
+
+[tasks."agent:latest"]
+description = "Show the pinned Playbook version and the newest upstream tag"
+run = '''
+set -e
+
+dep=$(sed -n '/Playbook#/p' apm.yml | head -1)
+repo=$(printf '%s\n' "$dep" | sed -E 's|^[[:space:]]*-[[:space:]]*||; s|#.*||')
+pin=$(printf '%s\n' "$dep" | sed -E 's|.*#||; s|[[:space:]]*$||')
+
+# Tags, not releases: Playbook publishes no GitHub releases, and `git ls-remote`
+# uses the same credentials `apm install` already needs.
+latest=$(git ls-remote --tags --refs "https://github.com/${repo}.git" 'v*' \
+  | sed 's|.*refs/tags/||' | sort -V | tail -1)
+
+printf 'repo:   %s\npinned: %s\nlatest: %s\n' "$repo" "$pin" "$latest"
+
+if [ "$pin" = "$latest" ]; then
+  echo "status: up to date"
+else
+  echo "status: outdated — run 'mise run agent:upgrade'"
+fi
+'''
+
+[tasks."agent:upgrade"]
+description = "Move the Playbook pin, reinstall the package, and regenerate AGENTS.md"
+usage = 'arg "[version]" help="Playbook tag to pin, e.g. v0.4.0 (default: newest upstream)"'
+run = '''
+set -e
+
+url=https://github.com/Yazee-Me/Playbook.git
+
+version=${usage_version:-}
+if [ -z "$version" ]; then
+  version=$(git ls-remote --tags --refs "$url" 'v*' \
+    | sed 's|.*refs/tags/||' | sort -V | tail -1)
+fi
+case "$version" in
+  v*) ;;
+  *) version="v$version" ;;
+esac
+
+if ! git ls-remote --tags --refs "$url" "refs/tags/$version" | grep -q .; then
+  printf 'error: Playbook has no tag %s\n' "$version" >&2
+  exit 1
+fi
+
+# APM keeps install baselines in .apm-local/, which is gitignored: a clone or
+# worktree whose generated files came from git has no baseline, so APM refuses
+# to overwrite them even when they match the lock. --force is safe only while
+# that generated output carries no local edits, so refuse otherwise.
+if ! git diff --quiet -- AGENTS.md .agents; then
+  printf 'error: commit or revert the local changes under AGENTS.md and .agents/ first\n' >&2
+  exit 1
+fi
+
+# `apm update` refreshes the current ref only; a tag pin moves by editing apm.yml.
+sed -E "s|(Playbook)#[^[:space:]]*|\1#${version}|" apm.yml >apm.yml.tmp
+mv apm.yml.tmp apm.yml
+
+apm install --force
+apm compile
+
+printf '\nPinned %s. Review the diff, commit apm.yml, apm.lock.yaml, AGENTS.md,\n' "$version"
+printf 'and .agents/ together, then run mise run agent:check.\n'
+git status --short -- apm.yml apm.lock.yaml AGENTS.md .agents
+'''

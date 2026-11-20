@@ -1,0 +1,10 @@
+name: lockset
+version: 0.1.0
+description: "Lockset: per-principal grants on top of sops and age"
+
+targets:
+  - opencode
+
+dependencies:
+  apm:
+    - Yazee-Me/Playbook#v0.4.1

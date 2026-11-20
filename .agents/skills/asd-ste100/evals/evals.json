@@ -1,0 +1,29 @@
+{
+ "skill_name": "asd-ste100",
+ "evals": [
+  {
+   "id": 0,
+   "prompt": "my node service keeps eating memory until it gets OOM-killed after a couple days. it's an express app with a redis client and a websocket server. can you explain what usually causes this and how i can find it? i'm not a native english speaker so keep it simple",
+   "expected_output": "A chat reply that explains the usual causes of a slow Node memory leak and gives the steps to find it. Simplified Technical English style.",
+   "files": []
+  },
+  {
+   "id": 1,
+   "prompt": "i need to rotate our production API key for the payments service without downtime. write the exact steps for the team to follow. we use kubernetes and the key is in a secret. the old key has to stay valid for 24h after the new one goes live.",
+   "expected_output": "A numbered procedure in the imperative form. Each step is 20 words or less. It keeps the old key valid for 24 hours.",
+   "files": []
+  },
+  {
+   "id": 2,
+   "prompt": "how do i delete all rows older than 90 days from the events table in postgres? it has about 400 million rows and the disk keeps filling up. give me the command and tell me what to watch out for.",
+   "expected_output": "A reply with the SQL command and a WARNING or CAUTION that states the risk. Simplified Technical English style.",
+   "files": []
+  },
+  {
+   "id": 3,
+   "prompt": "rewrite this release note in simplified english for our japanese translators: 'We are pleased to announce that the new caching layer has been substantially optimized, leveraging an in-memory store, which should significantly improve latency under high load and reduce database pressure.'",
+   "expected_output": "A short rewritten release note that keeps the meaning. Simplified Technical English style.",
+   "files": []
+  }
+ ]
+}

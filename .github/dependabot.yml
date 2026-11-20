@@ -5,6 +5,12 @@ version: 2
 # version bump does not flood the queue, and each one goes through the same CI
 # gate as any other change.
 updates:
+  - package-ecosystem: apm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
   - package-ecosystem: cargo
     directory: "/"
     schedule:

@@ -30,6 +30,7 @@ impl Harness {
                 "    echo \"age: identity $SOPS_AGE_KEY did not match\" >&2\n",
                 "    exit 1 ;;\n",
                 "  set)\n",
+                "    cat >/dev/null\n",
                 "    echo 'sops: cannot write the file' >&2\n",
                 "    echo 'sops: the store is read-only' >&2\n",
                 "    exit 1 ;;\n",

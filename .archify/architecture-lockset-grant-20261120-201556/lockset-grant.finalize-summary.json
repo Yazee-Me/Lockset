@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/Users/jack/Projects/yazee/Lockset/.archify/architecture-lockset-grant-20261120-201556/candidate.json",
+    "sha256": "d67c373574befe8dbb54aed29f05559cbc00f3370aaee0fe88d14a82b5c6a6a1",
+    "bytes": 6118
+  },
+  "artifact": {
+    "path": "/Users/jack/Projects/yazee/Lockset/.archify/architecture-lockset-grant-20261120-201556/lockset-grant.html",
+    "sha256": "5d700d2de87dd01bb82e8191234373da0def0a93d5063165180774b615d77f76",
+    "bytes": 828063
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/Users/jack/Projects/yazee/Lockset/.archify/architecture-lockset-grant-20261120-201556/lockset-grant.finalize.json",
+    "summaryReceipt": "/Users/jack/Projects/yazee/Lockset/.archify/architecture-lockset-grant-20261120-201556/lockset-grant.finalize-summary.json",
+    "browserCheckReceipt": "/Users/jack/Projects/yazee/Lockset/.archify/architecture-lockset-grant-20261120-201556/lockset-grant.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-20T18:17:04.910Z",
+    "source": "network",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 1786,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

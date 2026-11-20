@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "eace80c6-fdf8-4a6f-9c87-2c803b5e9cc1",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/jack/Projects/yazee/Lockset/.archify/architecture-lockset-grant-20261120-201556/candidate.json",
+  "output": "/Users/jack/Projects/yazee/Lockset/.archify/architecture-lockset-grant-20261120-201556/lockset-grant.html",
+  "specification": {
+    "sha256": "9d93027cbe900a9e2af0699f2b21ab03c30805cbfdf26a37b1f29fd222081d7a",
+    "bytes": 7538
+  },
+  "artifact": {
+    "sha256": "881f94a9ccab28db84ddcde5d13fa2ac4d3cc8549473f0b8203f783b99e0689a",
+    "bytes": 828116
+  }
+}

@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Lockset: grant a key through Plan and apply",
+    "locale": "en",
+    "output": ".archify/architecture-lockset-grant-20261120-201556/lockset-grant.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Yazee-Me/Lockset.git",
+      "provider": "github",
+      "revision": "5aa5ece00fe8cd1b392cf01166c53383fd7b6d9f"
+    }
+  },
+  "components": [
+    {
+      "id": "actor",
+      "type": "external",
+      "label": "Developer / CI",
+      "sublabel": "lockset <command>",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 83,
+          "end_line": 97
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "CLI + wiring",
+      "sublabel": "parse · resolve · dispatch",
+      "tag": "exit code by class",
+      "pos": [
+        240,
+        288
+      ],
+      "size": [
+        180,
+        88
+      ],
+      "sources": [
+        {
+          "path": "lockset/src/main.rs",
+          "line": 9,
+          "end_line": 15
+        },
+        {
+          "path": "lockset/src/app.rs",
+          "line": 51,
+          "end_line": 60
+        },
+        {
+          "path": "lockset/src/wiring.rs",
+          "line": 39,
+          "end_line": 63
+        }
+      ]
+    },
+    {
+      "id": "ops",
+      "type": "backend",
+      "label": "Ops",
+      "sublabel": "grant · revoke · rotate · set",
+      "tag": "plans, no I/O",
+      "pos": [
+        500,
+        300
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "lockset-core/src/ops.rs",
+          "line": 233,
+          "end_line": 310
+        },
+        {
+          "path": "lockset-core/src/plan.rs",
+          "line": 81,
+          "end_line": 118
+        }
+      ]
+    },
+    {
+      "id": "apply",
+      "type": "backend",
+      "label": "exec::apply",
+      "sublabel": "backup · digest check · write",
+      "tag": "only mutation site",
+      "pos": [
+        740,
+        300
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "lockset-core/src/exec.rs",
+          "line": 21,
+          "end_line": 45
+        },
+        {
+          "path": "lockset-core/src/exec.rs",
+          "line": 78,
+          "end_line": 100
+        }
+      ]
+    },
+    {
+      "id": "sops",
+      "type": "external",
+      "label": "sops CLI",
+      "sublabel": "age encrypt / decrypt",
+      "tag": "SOPS_AGE_KEY",
+      "pos": [
+        980,
+        300
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "lockset-tools/src/sops.rs",
+          "line": 48,
+          "end_line": 49
+        },
+        {
+          "path": "lockset-tools/src/sops.rs",
+          "line": 162,
+          "end_line": 180
+        },
+        {
+          "path": "lockset-tools/src/sops.rs",
+          "line": 206,
+          "end_line": 225
+        }
+      ]
+    },
+    {
+      "id": "custody",
+      "type": "security",
+      "label": "Custody",
+      "sublabel": "keychain · env · file",
+      "tag": "lockset-tools",
+      "pos": [
+        240,
+        100
+      ],
+      "size": [
+        190,
+        64
+      ],
+      "sources": [
+        {
+          "path": "lockset/src/wiring.rs",
+          "line": 144,
+          "end_line": 175
+        },
+        {
+          "path": "lockset-tools/src/custody.rs",
+          "line": 9,
+          "end_line": 14
+        },
+        {
+          "path": "lockset-tools/src/custody.rs",
+          "line": 346,
+          "end_line": 350
+        }
+      ]
+    },
+    {
+      "id": "repo",
+      "type": "database",
+      "label": "Repository",
+      "sublabel": ".sops.yaml · secrets/*.env",
+      "tag": "FsRepo",
+      "pos": [
+        600,
+        500
+      ],
+      "size": [
+        280,
+        84
+      ],
+      "sources": [
+        {
+          "path": "lockset-tools/src/fs_repo.rs",
+          "line": 28,
+          "end_line": 51
+        },
+        {
+          "path": "lockset-tools/src/fs_repo.rs",
+          "line": 51,
+          "end_line": 91
+        },
+        {
+          "path": "lockset/src/wiring.rs",
+          "line": 250,
+          "end_line": 296
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "lockset-core — no direct I/O",
+      "wraps": [
+        "ops",
+        "apply"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "run",
+      "from": "actor",
+      "to": "cli",
+      "label": "run",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "snapshot",
+      "from": "cli",
+      "to": "ops",
+      "label": "Snapshot",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "plan",
+      "from": "ops",
+      "to": "apply",
+      "label": "Plan",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "spawn",
+      "from": "apply",
+      "to": "sops",
+      "label": "spawn",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "key-read",
+      "from": "cli",
+      "to": "custody",
+      "label": "read key",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "key-write",
+      "from": "apply",
+      "to": "custody",
+      "label": "store / forget key",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "right"
+    },
+    {
+      "id": "read",
+      "from": "cli",
+      "to": "repo",
+      "label": "read",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "write-rules",
+      "from": "apply",
+      "to": "repo",
+      "label": "write rules",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "rewrite",
+      "from": "sops",
+      "to": "repo",
+      "label": "rewrite payloads",
+      "fromSide": "bottom",
+      "toSide": "right"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Plan, then apply",
+      "items": [
+        "Every mutating command builds a Plan of Change values; --dry-run renders it and stops.",
+        "exec::apply is the only writer: it backs up, checks digests, and restores on failure.",
+        "A plan never mixes repository and custody changes."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Identity boundary",
+      "items": [
+        "Custody is the OS keychain on a terminal, LOCKSET_AGE_KEY or LOCKSET_CUSTODY, a file, or none.",
+        "sops gets the key only through SOPS_AGE_KEY; it never reaches argv or a file.",
+        "sops output and stderr are redacted before they are printed."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Store invariants",
+      "items": [
+        ".sops.yaml is rewritten before payloads are re-wrapped against it.",
+        "Rewrites of .sops.yaml touch only the age: lines and preserve its line endings.",
+        "A mutation lock (.git/lockset.lock) serializes writers."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Read paths",
+      "items": [
+        "status, who, and check read a Snapshot and never need to write.",
+        "export prints decrypted values; run execs a child with them in its environment, scrubbed by default.",
+        "lockset.toml supplies payload globs, default payloads, and custody/codec settings."
+      ]
+    }
+  ]
+}

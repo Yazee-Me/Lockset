@@ -25,3 +25,15 @@ checksum = "sha256"
 github-attestations = true
 # A tag run is the release; PRs keep running the ordinary CI only.
 pr-run-mode = "skip"
+
+# Every release job runs on Blacksmith except the Intel macOS build: Blacksmith
+# macOS runners are ARM only, so x86_64-apple-darwin stays on GitHub's
+# macos-15-intel image.
+[dist.github-custom-runners]
+global = "blacksmith-2vcpu-ubuntu-2404"
+x86_64-unknown-linux-gnu = "blacksmith-4vcpu-ubuntu-2404"
+x86_64-unknown-linux-musl = "blacksmith-4vcpu-ubuntu-2404"
+aarch64-unknown-linux-gnu = "blacksmith-4vcpu-ubuntu-2404-arm"
+aarch64-unknown-linux-musl = "blacksmith-4vcpu-ubuntu-2404-arm"
+aarch64-apple-darwin = "blacksmith-6vcpu-macos-26"
+x86_64-pc-windows-msvc = "blacksmith-2vcpu-windows-2025"

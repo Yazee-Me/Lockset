@@ -55,10 +55,18 @@ The deviations are deliberate and named with the rule they override.
   end-to-end, `cargo-deny`, and `cargo-audit`.
 - `mise run e2e` runs the real pinned `sops` and `age`; `mise run fuzz` sweeps
   the parsers and needs the nightly toolchain and `cargo-fuzz`.
-- CI runs the same versions from `mise.toml` on GitHub-hosted runners. The
-  shared Playbook rule that puts every job on Blacksmith does not apply to this
-  repository: it has no Blacksmith app, and the workflows use the GitHub-hosted
-  `ubuntu-24.04`, `macos-15`, and `windows-2022` images.
+- CI runs the same versions from `mise.toml` on Blacksmith:
+  `blacksmith-2vcpu-ubuntu-2404` for ordinary jobs,
+  `blacksmith-4vcpu-ubuntu-2404` for lint, fuzzing, image builds, packaging,
+  and the cross-target check, `blacksmith-*-ubuntu-2404-arm` for ARM,
+  `blacksmith-6vcpu-macos-26` for macOS, and `blacksmith-2vcpu-windows-2025`
+  for Windows. Never use `ubuntu-latest`, `macos-latest`, `windows-latest`, or
+  `self-hosted`.
+- The one exception is the Intel macOS release build
+  (`x86_64-apple-darwin`): Blacksmith macOS runners are ARM only, so
+  cargo-dist keeps that job on GitHub's `macos-15-intel`. Release runners come
+  from `dist-workspace.toml` (`[dist.github-custom-runners]`); never edit the
+  generated `release.yml` by hand.
 - This repository has no TypeScript, no database, and no Sentry integration.
   The shared rules for those areas do not apply.
 

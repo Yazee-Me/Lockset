@@ -13,9 +13,10 @@ applyTo: "**"
   `.agents/skills/` — the same surface every harness reads, so no per-client
   directory carries context. `.opencode/` stays empty until an agent or prompt
   primitive is added.
-- A fresh clone or worktree has no `apm_modules/`. Run `apm install --frozen`
-  before `apm compile`; otherwise compile omits the shared Playbook
-  instructions.
+- A fresh clone or worktree has no `apm_modules/` and no `.apm-local/` install
+  baseline. Run `apm install --frozen --force` before `apm compile`; the force
+  flag redeploys the committed files, and the generated-context check proves
+  they match. Without it, APM refuses every committed file as a collision.
 - `mise run agent:sync` resolves the package and regenerates the context files.
 - `mise run agent:check` verifies the committed output against the lockfile and
   Playbook, then runs `apm audit --ci`. Run it before a commit or pull request.

@@ -27,7 +27,10 @@ jobs:
           github-token: ${{ secrets.APM_PAT }}
 
       - name: Resolve the pinned context
-        run: apm install --frozen
+        # --force redeploys the committed files, which a fresh checkout has no
+        # .apm-local install baseline for. The next step proves the result
+        # matches the commit.
+        run: apm install --frozen --force
         env:
           GITHUB_APM_PAT: ${{ secrets.APM_PAT }}
 

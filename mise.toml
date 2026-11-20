@@ -78,14 +78,18 @@ depends = ["test", "lint", "e2e", "deny", "audit"]
 
 # ── Agent context ───────────────────────────────────────────────────────────
 
+# A fresh clone or worktree has the committed output but no .apm-local install
+# baseline, so APM refuses to redeploy it without --force. agent:check then
+# requires the redeployed tree to match the commit.
+
 [tasks."agent:sync"]
 description = "Resolve the pinned Playbook package and regenerate AGENTS.md"
-run = "apm install --frozen && apm compile"
+run = "apm install --frozen --force && apm compile"
 
 [tasks."agent:check"]
 description = "Verify the committed agent context matches the lockfile and Playbook"
 run = """
-apm install --frozen
+apm install --frozen --force
 apm compile
 test -z "$(git status --porcelain --untracked-files=all -- AGENTS.md .agents .opencode apm.lock.yaml)"
 apm audit --ci --policy ./apm-policy.yml

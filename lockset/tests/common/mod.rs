@@ -80,12 +80,17 @@ pub fn lockset_with(
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             let mut child = command.spawn().unwrap();
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(text.as_bytes())
-                .unwrap();
+            let mut stdin = child.stdin.take().unwrap();
+            if let Err(error) = stdin.write_all(text.as_bytes()) {
+                // The command may reject its arguments and exit before it
+                // reads stdin, which closes the pipe. The caller asserts the
+                // exit status and output, so only a real write error fails.
+                match error.kind() {
+                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset => {}
+                    _ => panic!("writing stdin: {error}"),
+                }
+            }
+            drop(stdin);
             child.wait_with_output().unwrap()
         }
     }

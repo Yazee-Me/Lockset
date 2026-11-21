@@ -7,4 +7,4 @@ targets:
 
 dependencies:
   apm:
-    - Yazee-Me/Playbook#v0.5.1
+    - Yazee-Me/Playbook#v0.5.2

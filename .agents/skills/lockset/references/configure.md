@@ -12,8 +12,10 @@ mkdir -p ~/.config/lockset
 age-keygen -o ~/.config/lockset/age-key.txt
 ```
 
-The file prints the public `age1...` recipient in a comment. Store the private
-key in custody:
+`age-keygen` comes from the `age` package and is only needed to create the
+identity; install `age` if it is missing. Lockset itself never runs the `age`
+binary. The file prints the public `age1...` recipient in a comment. Store the
+private key in custody:
 
 ```sh
 # macOS/Linux keychain; macOS prompts for keychain access

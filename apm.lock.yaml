@@ -5,9 +5,9 @@ dependencies:
   materialization_repo_url: Yazee-Me/Playbook
   name: playbook
   host: github.com
-  resolved_commit: 40b14207cf3a3acc5c17dfb08ffc29d9c5cb77a9
-  resolved_ref: v0.5.1
-  version: 0.5.1
+  resolved_commit: 829d146d8d27090fc8cb0514efeef9dce4dd7028
+  resolved_ref: v0.5.2
+  version: 0.5.2
   package_type: apm_package
   deployed_files:
   - .agents/skills/apm-context
@@ -467,7 +467,7 @@ dependencies:
     .agents/skills/jira-tickets/references/workflow.md: sha256:a47564eef488ba18198b151ac00e63015399f0ea025e27a4aec4ac142d45059b
     .agents/skills/lockset/SKILL.md: sha256:b0ef64bd10a0ba03dfe8a41a3ee09cef882dd60ed9abd521440d0ba399c71be9
     .agents/skills/lockset/references/ci.md: sha256:d8f3f005c38d19c7799f6e3796ca73a5cabf2ddb5e62b4a216b23ca04b5bec5e
-    .agents/skills/lockset/references/configure.md: sha256:4c675b0a487ab01e9537ffc504335cb8c501b6f0c05735a98b0c560195109cc2
+    .agents/skills/lockset/references/configure.md: sha256:91170913e5272caeed239f6414c8ae10e69b9b7b15ebe790079e156cbeef1cde
     .agents/skills/lockset/references/install.md: sha256:b146039fb28efd7dcaf8bf1c7f1c2906ee26d76fb1152db096f73646cc9e08b5
     .agents/skills/lockset/references/operations.md: sha256:740873aebc6c715da06483ae6eae588e68e3729933885c20161232eade177c8c
     .agents/skills/readable-code/SKILL.md: sha256:255e234e7e7480ba002d3db71d8a6370a7040d1468da8102ca5019745cb3a259
@@ -476,7 +476,7 @@ dependencies:
     .agents/skills/verify-output/SKILL.md: sha256:1cfe0b4293dcb3be7d24b54a2edff997257e6cd7558524221f383e9edbff6b88
     .agents/skills/verify-output/references/report-template.md: sha256:f93bcf8a02db37aa818b2358edf6f9f2a08d772d3f21fb82dbd9323ea328597b
     .agents/skills/verify-output/scripts/check-report.mjs: sha256:b789cfb2c8ccfd7d1a5164280e9e1c6ebe726b5ad05f27a47ae6fa1cbdfb7a72
-  content_hash: sha256:77448cd71eb8ef16601d18f69ccf4e0c95835faed5462c3f60b09e3fcdb971ce
+  content_hash: sha256:ce630b8c7721d691e3ae1fd5f2f66869482b64e2b73e680e417211a042a20f14
 deployments:
 - kind: project-relative
   target: opencode
@@ -2520,7 +2520,7 @@ deployments:
   owners:
   - yazee-me/playbook
   active_owner: yazee-me/playbook
-  content_hash: sha256:4c675b0a487ab01e9537ffc504335cb8c501b6f0c05735a98b0c560195109cc2
+  content_hash: sha256:91170913e5272caeed239f6414c8ae10e69b9b7b15ebe790079e156cbeef1cde
 - kind: project-relative
   target: opencode
   value: .agents/skills/lockset/references/install.md

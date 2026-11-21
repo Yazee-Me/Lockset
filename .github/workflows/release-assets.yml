@@ -118,7 +118,7 @@ jobs:
             if (-not (Test-Path $file)) { throw "checksum names a missing file: $name" }
             $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
             if ($actual -ne $expected.ToLower()) { throw "checksum mismatch: $name" }
-            Write-Host "$name: OK"
+            Write-Host "${name}: OK"
             $verified++
           }
           if ($verified -eq 0) { throw "no checksums in artifacts" }

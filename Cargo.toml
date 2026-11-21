@@ -3,7 +3,7 @@ resolver = "2"
 members = ["lockset-core", "lockset-tools", "lockset"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # The toolchain CI proves the workspace builds with (see the msrv job).
 # 1.89 is required by the locked graph: aes 0.9.3 (secret-service) and

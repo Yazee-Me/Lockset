@@ -19,7 +19,7 @@ default = ["keyring"]
 keyring = ["dep:keyring"]
 
 [dependencies]
-lockset-core = { path = "../lockset-core", version = "0.1.0" }
+lockset-core = { path = "../lockset-core", version = "0.2.0" }
 serde_json = "1"
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]

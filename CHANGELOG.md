@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-21
+
 ### Added
 
 - `lockset unset KEY --payload PATH` (or the payload-first

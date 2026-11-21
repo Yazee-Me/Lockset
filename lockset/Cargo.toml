@@ -25,8 +25,8 @@ default = ["keyring"]
 keyring = ["lockset-tools/keyring"]
 
 [dependencies]
-lockset-core = { path = "../lockset-core", version = "0.1.0" }
-lockset-tools = { path = "../lockset-tools", version = "0.1.0" }
+lockset-core = { path = "../lockset-core", version = "0.2.0" }
+lockset-tools = { path = "../lockset-tools", version = "0.2.0" }
 anyhow.workspace = true
 clap.workspace = true
 rpassword.workspace = true

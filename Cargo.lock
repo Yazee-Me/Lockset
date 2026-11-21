@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "lockset"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1436,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "lockset-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "age",
  "proptest",
@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "lockset-tools"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "keyring",
  "lockset-core",

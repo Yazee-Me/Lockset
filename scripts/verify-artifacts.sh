@@ -69,10 +69,23 @@ if [ "$unpacked" -eq 0 ]; then
 fi
 
 # Run the binary this host can execute; a foreign-target archive only gets its
-# checksum verified above.
+# checksum verified above. Each archive has its own target-named directory, and
+# source.tar.gz contains a `lockset/` source directory that must not be run.
+host_target=
+case "$(uname -s):$(uname -m)" in
+    Linux:x86_64) host_target=x86_64-unknown-linux ;;
+    Linux:aarch64 | Linux:arm64) host_target=aarch64-unknown-linux ;;
+    Darwin:arm64) host_target=aarch64-apple-darwin ;;
+    Darwin:x86_64) host_target=x86_64-apple-darwin ;;
+esac
+
 ran=0
 for binary in "$work"/*/lockset "$work"/*/lockset.exe; do
-    [ -x "$binary" ] || continue
+    [ -f "$binary" ] && [ -x "$binary" ] || continue
+    case "$binary" in
+        *"$host_target/"* | *"$host_target-"*) ;;
+        *) continue ;;
+    esac
     "$binary" --version
     "$binary" --help >/dev/null
     ran=$((ran + 1))

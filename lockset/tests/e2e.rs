@@ -252,6 +252,85 @@ fn a_real_repository_round_trips_through_sops_and_lockset() {
 }
 
 #[test]
+fn an_edit_round_trips_through_the_real_sops_and_editor() {
+    let sops = require_tool("sops");
+    if !sops.is_absolute() {
+        return;
+    }
+    let repo = temp_repo("edit");
+    let (key_path, public) = identity(&repo, "admin");
+    let key = std::fs::read_to_string(&key_path)
+        .unwrap()
+        .lines()
+        .find(|line| line.starts_with("AGE-SECRET-KEY-1"))
+        .unwrap()
+        .to_owned();
+    encrypt(&repo, &sops, &public);
+    let env = [("LOCKSET_AGE_KEY", key.as_str())];
+
+    // The editor proves sops handed it a private temp file, then changes a
+    // value: sops must re-encrypt the result with the same recipient.
+    use std::os::unix::fs::PermissionsExt;
+    let editor = repo.join("editor.sh");
+    std::fs::write(
+        &editor,
+        concat!(
+            "#!/bin/sh\n",
+            "file=\"$1\"\n",
+            "mode=$(stat -c %a \"$file\" 2>/dev/null || stat -f %Lp \"$file\")\n",
+            "if [ \"$mode\" != \"600\" ]; then\n",
+            "  echo \"editor: mode was $mode, expected 600\" >&2\n",
+            "  exit 1\n",
+            "fi\n",
+            "printf 'TOKEN=edited-by-e2e\\n' > \"$file\"\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let editor = editor.display().to_string();
+
+    let edit = lockset(
+        &repo,
+        &["edit", "--payload", "secrets/dev.env"],
+        &[
+            ("LOCKSET_AGE_KEY", key.as_str()),
+            ("SOPS_EDITOR", editor.as_str()),
+        ],
+    );
+    assert_eq!(edit.status.code(), Some(0), "{}", stderr(&edit));
+
+    let exported = lockset(&repo, &["export", "--payload", "secrets/dev.env"], &env);
+    assert_eq!(exported.status.code(), Some(0), "{}", stderr(&exported));
+    assert!(
+        stdout(&exported).contains("TOKEN=edited-by-e2e"),
+        "{}",
+        stdout(&exported)
+    );
+
+    // A failing editor must leave the payload byte-identical and exit 4.
+    let payload = repo.join("secrets/dev.env");
+    let before = std::fs::read(&payload).unwrap();
+    let failing = repo.join("failing-editor.sh");
+    std::fs::write(&failing, "#!/bin/sh\necho 'refusing to edit' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&failing, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let failing = failing.display().to_string();
+    let failed = lockset(
+        &repo,
+        &["edit", "--payload", "secrets/dev.env"],
+        &[
+            ("LOCKSET_AGE_KEY", key.as_str()),
+            ("SOPS_EDITOR", failing.as_str()),
+        ],
+    );
+
+    assert_eq!(failed.status.code(), Some(4), "{}", stderr(&failed));
+    assert!(stderr(&failed).contains("sops edit"), "{}", stderr(&failed));
+    assert_eq!(std::fs::read(&payload).unwrap(), before);
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
 fn an_old_sops_is_refused_with_a_clear_message() {
     // A shim here is deliberate: the point is the version gate, not a real old
     // sops binary.

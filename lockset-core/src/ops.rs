@@ -636,6 +636,9 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+        fn edit(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -701,6 +704,9 @@ mod tests {
             _value: &str,
             _key: &crate::model::SecretKey,
         ) -> Result<()> {
+            Ok(())
+        }
+        fn edit(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
             Ok(())
         }
     }

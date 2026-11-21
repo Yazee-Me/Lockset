@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- `lockset edit` opens a payload in `$SOPS_EDITOR` (default `vim -n`) and
+  re-encrypts it with the same recipient set, through sops's own plaintext temp
+  file (mode 0600). A payload that comes back unencrypted, with other
+  recipients, with a plaintext value, or that no longer decrypts is refused with
+  exit 4, and a non-zero editor exit leaves the payload byte-identical.
+
 ### Internal
 
 - The agent context (`AGENTS.md` and `.agents/skills/`) is generated from the

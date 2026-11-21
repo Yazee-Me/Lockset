@@ -299,6 +299,9 @@ fn dispatch(cli: &Cli, context: &wiring::Context, inputs: &Inputs, ui: &mut Ui) 
             },
         ),
         Command::Rotate { all, payload } => rotate(context, cli, ui, *all, payload),
+        Command::Edit { path, payload } => {
+            edit(context, cli, ui, path.as_deref(), payload.as_deref())
+        }
         Command::Person { command } => person(context, cli, ui, command),
         Command::Export {
             payload,
@@ -365,7 +368,7 @@ fn one_default_payload(context: &wiring::Context) -> Result<PathId> {
         [one] => Ok(one.clone()),
         [] => Err(no_default_payload(context)),
         many => Err(usage::error(format!(
-            "set writes one payload, but repo.default_payloads lists {} ({}); pass --payload <PATH>",
+            "exactly one payload can be selected, but repo.default_payloads lists {} ({}); pass --payload <PATH>",
             many.len(),
             many.iter()
                 .map(|id| id.as_str())
@@ -1035,6 +1038,36 @@ fn key_is_set(context: &wiring::Context, id: &PathId, name: &str) -> Result<bool
     Ok(lockset_core::dotenv::parse(&text)
         .iter()
         .any(|(key, value)| key == name && !value.is_empty()))
+}
+
+/// Decrypt the payload into `$SOPS_EDITOR` and re-encrypt the result. The
+/// editor owns the plaintext; lockset never writes it into the repository.
+fn edit(
+    context: &wiring::Context,
+    cli: &Cli,
+    ui: &mut Ui,
+    path: Option<&str>,
+    payload: Option<&str>,
+) -> Result<u8> {
+    let id = match path.or(payload) {
+        Some(value) => payload_id(value)?,
+        None => one_default_payload(context)?,
+    };
+    lockset_core::meta::require_dotenv(&id)?;
+    let snapshot = wiring::snapshot(context)?;
+    if snapshot.payload(&id).is_none() {
+        if let Some(error) = snapshot.payload_error(&id) {
+            return Err(usage::error(format!(
+                "cannot use {}: {}",
+                error.id, error.error
+            )));
+        }
+        return Err(usage::error(format!("no such payload: {id}")));
+    }
+    let mut plan = Plan::default();
+    plan.push(Change::EditPayload { payload: id });
+    plan.expect(&snapshot.digests);
+    finish(context, cli, plan, ui)
 }
 
 fn rotate(

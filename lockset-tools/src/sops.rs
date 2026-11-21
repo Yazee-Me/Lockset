@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
-use lockset_core::{Codec, Error, PathId, Result, SecretKey};
+use lockset_core::meta::{self, PayloadMeta};
+use lockset_core::{Codec, Error, PathId, PubKey, Result, SecretKey};
 
 use crate::env;
 
@@ -45,6 +46,10 @@ fn redact(text: &str, key: Option<&SecretKey>) -> String {
     out
 }
 
+/// The editor `lockset edit` runs when `SOPS_EDITOR` names none. `vim -n` skips
+/// the swap file, so no plaintext copy survives a crash beside the payload.
+pub const DEFAULT_EDITOR: &str = "vim -n";
+
 /// The sops CLI, wrapped. The key is handed over through the child
 /// environment only; it never reaches argv or a file.
 pub struct SopsCodec {
@@ -54,6 +59,8 @@ pub struct SopsCodec {
     min: Version,
     /// The sops config file, from `repo.sops_config`.
     config: PathId,
+    /// The editor `edit` hands to sops as `SOPS_EDITOR`.
+    editor: String,
     /// The parent environment the child inherits (minus identity and `SOPS_*`),
     /// injected instead of read from the process.
     environment: Vec<(OsString, OsString)>,
@@ -69,6 +76,7 @@ impl SopsCodec {
             min,
             config: PathId::parse(lockset_core::config::DEFAULT_SOPS_CONFIG)
                 .expect("the default sops config path is valid"),
+            editor: DEFAULT_EDITOR.to_owned(),
             environment: Vec::new(),
             checked: OnceLock::new(),
         }
@@ -77,6 +85,12 @@ impl SopsCodec {
     /// Read and rewrite the sops config at `path` instead of `.sops.yaml`.
     pub fn with_config(mut self, path: PathId) -> Self {
         self.config = path;
+        self
+    }
+
+    /// The editor `edit` starts, passed to sops as `SOPS_EDITOR`.
+    pub fn with_editor(mut self, editor: impl Into<String>) -> Self {
+        self.editor = editor.into();
         self
     }
 
@@ -201,6 +215,38 @@ impl SopsCodec {
     fn verify(&self, id: &PathId, key: &SecretKey) -> Result<()> {
         self.decrypt(id, key).map(|_| ())
     }
+
+    /// The payload's metadata, read from the file sops owns. Used to prove the
+    /// editor kept the payload encrypted and the recipients unchanged.
+    fn payload_meta(&self, id: &PathId) -> Result<PayloadMeta> {
+        let path = self.root.join(id.as_str());
+        let bytes = std::fs::read(&path).map_err(|error| {
+            Error::failed(format!("cannot read {id} at {}: {error}", path.display()))
+        })?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| Error::failed(format!("cannot use {id}: the payload is not UTF-8")))?;
+        meta::parse(id.clone(), &text)
+            .map_err(|error| Error::failed(format!("cannot use {id}: {error}")))
+    }
+}
+
+/// The recipient set of a payload: order and duplicates do not matter, so a
+/// re-encryption that lists the same keys in another order still passes.
+fn recipient_set(meta: &PayloadMeta) -> Vec<PubKey> {
+    let mut keys = meta.recipients.clone();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn recipient_list(keys: &[PubKey]) -> String {
+    if keys.is_empty() {
+        return "(none)".to_owned();
+    }
+    keys.iter()
+        .map(PubKey::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl Codec for SopsCodec {
@@ -262,6 +308,48 @@ impl Codec for SopsCodec {
             )));
         }
         Ok(())
+    }
+
+    fn edit(&self, id: &PathId, key: &SecretKey) -> Result<()> {
+        let before = self.payload_meta(id)?;
+        let recipients = recipient_set(&before);
+
+        // sops owns the plaintext temp file (mode 0600) and the editor; it does
+        // not replace the payload when the editor exits non-zero. The identity
+        // reaches this child through SOPS_AGE_KEY only, and the editor it
+        // starts through SOPS_EDITOR, never argv.
+        let output = self
+            .command(&["edit", id.as_str()], key)
+            .env("SOPS_EDITOR", &self.editor)
+            .output()
+            .map_err(|error| Error::tool(format!("cannot run {}: {error}", self.bin)))?;
+        self.ok(&output, &format!("edit {id}"), key)?;
+
+        let after = self
+            .payload_meta(id)
+            .map_err(|error| Error::tool(format!("{id} is unreadable after the edit ({error})")))?;
+        if !after.encrypted {
+            return Err(Error::tool(format!(
+                "{id} is not encrypted after the editor closed; every value must stay encrypted"
+            )));
+        }
+        let after_recipients = recipient_set(&after);
+        if after_recipients != recipients {
+            return Err(Error::tool(format!(
+                "{id} must keep its recipient set while being edited; it changed from [{}] to [{}]",
+                recipient_list(&recipients),
+                recipient_list(&after_recipients),
+            )));
+        }
+        if !after.plaintext.is_empty() {
+            return Err(Error::tool(format!(
+                "{id} has plaintext values after the editor closed ({}); every value must stay encrypted",
+                after.plaintext.join(", ")
+            )));
+        }
+        self.verify(id, key).map_err(|error| {
+            Error::tool(format!("{id} must still decrypt after the edit: {error}"))
+        })
     }
 }
 

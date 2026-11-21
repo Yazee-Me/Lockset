@@ -10,6 +10,10 @@ pub trait Codec {
     fn rekey(&self, id: &PathId, key: &SecretKey) -> Result<()>;
     /// Set one value and re-encrypt; every other value must survive untouched.
     fn set_value(&self, id: &PathId, name: &str, value: &str, key: &SecretKey) -> Result<()>;
+    /// Decrypt into an interactive editor and re-encrypt the result. The
+    /// recipient set, the encryption, and the absence of plaintext values are
+    /// the codec's to prove after the editor closes.
+    fn edit(&self, id: &PathId, key: &SecretKey) -> Result<()>;
 }
 
 /// Where the local private key lives. No OS API in this trait.

@@ -245,6 +245,7 @@ pub fn describe(item: &Change) -> String {
         } => format!("set {name} in {payload}"),
         Change::StoreKey { custody } => format!("store the key in {custody}"),
         Change::ForgetKey { custody } => format!("remove the key from {custody}"),
+        Change::EditPayload { payload } => format!("edit {payload}"),
     }
 }
 

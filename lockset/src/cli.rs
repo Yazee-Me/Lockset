@@ -131,6 +131,15 @@ pub enum Command {
         #[arg(long = "if-absent")]
         if_absent: bool,
     },
+    /// Edit a payload through $SOPS_EDITOR, then re-encrypt it
+    Edit {
+        /// Payload to edit (default: the single repo.default_payloads entry)
+        #[arg(value_name = "PATH", conflicts_with = "payload")]
+        path: Option<String>,
+        /// Payload to edit; same as the positional form
+        #[arg(long = "payload", value_name = "PATH")]
+        payload: Option<String>,
+    },
     /// Rotate the data key (and re-encrypt every value) of the selected payloads
     Rotate {
         /// Rotate every payload

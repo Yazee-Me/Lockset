@@ -53,7 +53,12 @@ impl Context {
             config.codec.min_version,
         )
         .with_config(config.sops_config.clone())
-        .with_environment(inputs.vars_os());
+        .with_environment(inputs.vars_os())
+        .with_editor(
+            inputs
+                .var("SOPS_EDITOR")
+                .unwrap_or(lockset_tools::sops::DEFAULT_EDITOR),
+        );
         Ok(Self {
             repo: FsRepo::new(&root),
             codec,

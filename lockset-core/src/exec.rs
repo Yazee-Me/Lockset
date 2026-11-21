@@ -127,6 +127,10 @@ fn run(
             codec.set_value(payload, name, value.expose(), key)?;
             format!("set {name} in {payload}")
         }
+        Change::EditPayload { payload } => {
+            codec.edit(payload, key)?;
+            format!("edited {payload}")
+        }
         Change::StoreKey { custody: kind } => {
             custody.set(key)?;
             format!("stored the key in {kind}")
@@ -332,6 +336,10 @@ mod tests {
 
         fn set_value(&self, id: &PathId, name: &str, _value: &str, _key: &SecretKey) -> Result<()> {
             self.call("set", id, name)
+        }
+
+        fn edit(&self, id: &PathId, _key: &SecretKey) -> Result<()> {
+            self.call("edit", id, "edited")
         }
     }
 

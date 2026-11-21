@@ -57,6 +57,10 @@ pub enum Change {
         name: String,
         value: SecretValue,
     },
+    /// Open the payload in `$SOPS_EDITOR` and re-encrypt it in place.
+    EditPayload {
+        payload: PathId,
+    },
     StoreKey {
         custody: CustodyKind,
     },
@@ -73,6 +77,7 @@ impl Change {
             Change::UpdateKeys { payload } => Some(payload),
             Change::RotateDataKey { payload } => Some(payload),
             Change::SetValue { payload, .. } => Some(payload),
+            Change::EditPayload { payload } => Some(payload),
             Change::StoreKey { .. } | Change::ForgetKey { .. } => None,
         }
     }

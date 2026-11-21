@@ -298,7 +298,14 @@ fn dispatch(cli: &Cli, context: &wiring::Context, inputs: &Inputs, ui: &mut Ui) 
                 if_absent: *if_absent,
             },
         ),
-        Command::Unset { key, payload } => unset(context, cli, ui, key, payload.as_deref()),
+        Command::Unset {
+            first,
+            second,
+            payload,
+        } => {
+            let (payload, key) = unset_target(first, second.as_deref(), payload.as_deref())?;
+            unset(context, cli, ui, key, payload)
+        }
         Command::Rotate { all, payload } => rotate(context, cli, ui, *all, payload),
         Command::Edit { path, payload } => {
             edit(context, cli, ui, path.as_deref(), payload.as_deref())
@@ -1039,6 +1046,25 @@ fn key_is_set(context: &wiring::Context, id: &PathId, name: &str) -> Result<bool
     Ok(lockset_core::dotenv::parse(&text)
         .iter()
         .any(|(key, value)| key == name && !value.is_empty()))
+}
+
+/// The accepted shapes of `unset`, normalized to (payload, key):
+/// `unset KEY --payload PATH`, `unset PATH KEY`, and `unset KEY` (the
+/// configured default payload). Clap already refuses `--payload` beside two
+/// positionals; the check here keeps a directly built `Command` honest.
+fn unset_target<'a>(
+    first: &'a str,
+    second: Option<&'a str>,
+    payload: Option<&'a str>,
+) -> Result<(Option<&'a str>, &'a str)> {
+    match (payload, second) {
+        (Some(path), None) => Ok((Some(path), first)),
+        (Some(_), Some(_)) => Err(usage::error(
+            "unset takes one key with --payload; drop the extra positional",
+        )),
+        (None, Some(key)) => Ok((Some(first), key)),
+        (None, None) => Ok((None, first)),
+    }
 }
 
 /// Remove one key from the selected payload. A key the payload does not set is

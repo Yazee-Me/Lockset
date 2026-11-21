@@ -168,6 +168,103 @@ fn unset_removes_only_the_named_key() {
 }
 
 #[test]
+fn the_payload_first_form_removes_the_named_key() {
+    let fake = Unset::new("unset-payload-first", false);
+
+    let output = fake.with_identity(&["unset", "secrets/dev.env", "TWO"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("removed TWO from secrets/dev.env"),
+        "{}",
+        stdout(&output)
+    );
+    let after = fake.payload();
+    assert!(
+        after.contains("ONE=ENC[AES256_GCM,data:aaa,type:str]"),
+        "{after}"
+    );
+    assert!(!after.contains("TWO="), "{after}");
+
+    // The set-style form still works on the same payload.
+    let output = fake.with_identity(&["unset", "ONE", "--payload", "secrets/dev.env"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(!fake.payload().contains("ONE="), "{}", fake.payload());
+    assert_eq!(
+        fake.unset_argv(),
+        [
+            r#"unset --idempotent secrets/dev.env ["TWO"]"#,
+            r#"unset --idempotent secrets/dev.env ["ONE"]"#,
+        ]
+    );
+}
+
+#[test]
+fn three_positionals_are_a_usage_error() {
+    let fake = Unset::new("unset-three", false);
+    let before = fake.payload();
+
+    let output = fake.with_identity(&["unset", "secrets/dev.env", "TOKEN", "EXTRA"]);
+
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(fake.unset_argv().is_empty(), "sops unset was invoked");
+    assert_eq!(fake.payload(), before);
+}
+
+#[test]
+fn a_payload_flag_with_two_positionals_is_a_usage_error() {
+    let fake = Unset::new("unset-flag-and-path", false);
+    let before = fake.payload();
+
+    let output = fake.with_identity(&[
+        "unset",
+        "TOKEN",
+        "secrets/dev.env",
+        "--payload",
+        "secrets/dev.env",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(fake.unset_argv().is_empty(), "sops unset was invoked");
+    assert_eq!(fake.payload(), before);
+}
+
+#[test]
+fn a_payload_first_form_with_an_invalid_key_name_is_a_usage_error() {
+    let fake = Unset::new("unset-payload-first-invalid", false);
+    let before = fake.payload();
+
+    let output = fake.with_identity(&["unset", "secrets/dev.env", "NOT-A-KEY"]);
+
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("invalid key name"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(fake.unset_argv().is_empty(), "sops unset was invoked");
+    assert_eq!(fake.payload(), before);
+}
+
+#[test]
+fn help_shows_all_three_forms() {
+    let fake = Unset::new("unset-help", false);
+
+    let output = fake.run(&["unset", "--help"], &[]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(
+        text.contains("lockset unset <KEY> --payload <PATH>"),
+        "{text}"
+    );
+    assert!(lines.contains(&"lockset unset <PATH> <KEY>"), "{text}");
+    assert!(lines.contains(&"lockset unset <KEY>"), "{text}");
+}
+
+#[test]
 fn a_missing_key_is_a_no_op_success() {
     let fake = Unset::new("unset-missing", false);
     let before = fake.payload();

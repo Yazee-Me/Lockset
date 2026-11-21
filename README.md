@@ -100,6 +100,7 @@ lockset set NEW_KEY --payload secrets/dev.env --value-file /run/secrets/new-key
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY --if-absent  # keep a value already set
 lockset edit --payload secrets/dev.env     # $SOPS_EDITOR, default vim -n
 lockset unset OLD_KEY --payload secrets/dev.env   # remove one key; a missing key is a no-op
+lockset unset secrets/prod/infra.env OLD_KEY      # payload-first form, same command
 lockset --dry-run --json set NEW_KEY --payload secrets/dev.env   # plan as JSON, value redacted
 lockset export --payload secrets/prod/deploy.env --format dotenv
 lockset grant age1... --label dev-alice

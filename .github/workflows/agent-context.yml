@@ -16,7 +16,7 @@ jobs:
     name: APM lockfile · deployed context
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # APM_PAT is a fine-grained PAT with Contents:read on Yazee-Me/Playbook.
       # Add it under Settings -> Secrets and variables -> Actions.

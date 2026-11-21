@@ -24,7 +24,7 @@ jobs:
   action:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install age and the pinned sops
         run: |

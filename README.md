@@ -25,6 +25,8 @@ the API docs at <https://docs.rs/lockset>.
 - Opens a payload in `$SOPS_EDITOR` (default `vim -n`) and re-encrypts it with
   the same recipients: `edit`. A failed editor leaves the payload byte-identical,
   and lockset never writes the plaintext itself.
+- Removes one key and re-encrypts the payload with the same recipients, keeping
+  every other value: `unset`. A key the payload does not set is a no-op success.
 - Rotates data keys without touching values: `rotate`.
 - Grants and revokes recipients, rewriting only the `age:` line of
   `.sops.yaml`, re-wrapping the affected payloads, and rotating the data key on
@@ -71,8 +73,9 @@ Every mutating command prints its plan; `--dry-run` stops there.
   any sops call. See “Portability”.
 - The only payload format is dotenv (`.env`). Every non-hidden file matched by
   `repo.payload_globs` is reported as an unsupported payload in `status` and
-  `check` when it is another format, and `run`/`set`/`edit` reject it with a
-  message naming the format, so no payload is silently ignored or half-counted.
+  `check` when it is another format, and `run`/`set`/`edit`/`unset` reject it
+  with a message naming the format, so no payload is silently ignored or
+  half-counted.
   Hidden files (`.gitkeep`, editor temporaries) are not payloads.
 
 ## Use
@@ -96,6 +99,7 @@ lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY
 lockset set NEW_KEY --payload secrets/dev.env --value-file /run/secrets/new-key
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY --if-absent  # keep a value already set
 lockset edit --payload secrets/dev.env     # $SOPS_EDITOR, default vim -n
+lockset unset OLD_KEY --payload secrets/dev.env   # remove one key; a missing key is a no-op
 lockset --dry-run --json set NEW_KEY --payload secrets/dev.env   # plan as JSON, value redacted
 lockset export --payload secrets/prod/deploy.env --format dotenv
 lockset grant age1... --label dev-alice
@@ -215,7 +219,7 @@ highest first, flags, environment, this file, the defaults.
 sops_config = ".sops.yaml"               # the map --repo walks up to (with lockset.toml);
                                          # a non-default path is passed to sops as --config
 payload_globs = ["secrets/**/*"]         # which files are payloads
-default_payloads = ["secrets/dev.env"]   # what run, set, and edit use without --payload
+default_payloads = ["secrets/dev.env"]   # what run, set, edit, and unset use without --payload
 
 [[identities]]
 label = "admin"                          # the registry wins over .sops.yaml comments
@@ -243,7 +247,7 @@ Every field, its default, and what it does:
 | --- | --- | --- |
 | `repo.sops_config` | `.sops.yaml` | The map, repo-relative. A non-default path is passed to sops as `--config`; `--repo` walks up to this file or `lockset.toml`. |
 | `repo.payload_globs` | `["secrets/**/*"]` | Which files are payloads, matched against repository-relative paths. `*` and `?` stop at `/`; `**/` spans any number of directories. |
-| `repo.default_payloads` | `[]` | What `run`, `set`, and `edit` use without `--payload`. Empty means "ask": a command that needs one stops with exit 2 and lists what is available. |
+| `repo.default_payloads` | `[]` | What `run`, `set`, `edit`, and `unset` use without `--payload`. Empty means "ask": a command that needs one stops with exit 2 and lists what is available. |
 | `[[identities]]` | `[]` | Identity registry: `label`, `public`, optional `roles`. When present it wins over `.sops.yaml` comments; role `admin` marks the identity that must open every payload. |
 | `labels.admin` | `"admin"` | Legacy label used for admin coverage while no registry exists. |
 | `labels.person_prefix` | `"dev-"` | Prefix suggested for `person add` labels. |
@@ -254,10 +258,10 @@ Every field, its default, and what it does:
 | `codec.sops` | `sops` | The binary; `--sops` and `LOCKSET_SOPS` win over it. |
 | `codec.min_version` | `3.13.0` | The preflight floor for sops. |
 
-`run`, `set`, and `edit` never invent a payload: without `--payload` they use
-`repo.default_payloads`, and a repository that names none stops with exit 2 and
-lists the payloads it does have; `set` and `edit` need exactly one. A setting's
-precedence:
+`run`, `set`, `edit`, and `unset` never invent a payload: without `--payload`
+they use `repo.default_payloads`, and a repository that names none stops with
+exit 2 and lists the payloads it does have; `set`, `edit`, and `unset` need
+exactly one. A setting's precedence:
 
 | Setting | Flag | Environment | File |
 | --- | --- | --- | --- |
@@ -342,7 +346,7 @@ fallback for repositories that have not migrated.
 `sops` rules keyed by another backend (`pgp`, `kms`, `gcp_kms`, `azure_kv`,
 `hc_vault_transit_uri`) parse and do not fail the file. `status` lists their
 payloads, and `check` reports each such rule on its own line with the backend
-and what still works: `rotate` and `set` do, because they need no age
+and what still works: `rotate`, `set`, and `unset` do, because they need no age
 recipients. `grant` and `revoke` refuse only a rule they would have to rewrite —
 the message names the rule and the backend and points at `--only` — so the rest
 of a mixed map stays manageable.

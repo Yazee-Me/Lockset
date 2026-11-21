@@ -639,6 +639,14 @@ mod tests {
         fn edit(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
             Ok(())
         }
+        fn unset_value(
+            &self,
+            _id: &PathId,
+            _name: &str,
+            _key: &crate::model::SecretKey,
+        ) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -707,6 +715,14 @@ mod tests {
             Ok(())
         }
         fn edit(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
+        fn unset_value(
+            &self,
+            _id: &PathId,
+            _name: &str,
+            _key: &crate::model::SecretKey,
+        ) -> Result<()> {
             Ok(())
         }
     }

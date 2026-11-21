@@ -4,6 +4,11 @@
 
 ### Added
 
+- `lockset unset KEY --payload PATH` removes one key and re-encrypts the payload
+  with the same recipient set, leaving every other value intact. A key the
+  payload does not set is a no-op success: the command says so and never spawns
+  sops. The result is read back and compared with the input, so a write that
+  drops a value or another key fails with exit 4 and the payload is restored.
 - `lockset edit` opens a payload in `$SOPS_EDITOR` (default `vim -n`) and
   re-encrypts it with the same recipient set, through sops's own plaintext temp
   file (mode 0600). A payload that comes back unencrypted, with other

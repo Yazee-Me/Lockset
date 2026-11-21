@@ -228,6 +228,18 @@ impl SopsCodec {
         meta::parse(id.clone(), &text)
             .map_err(|error| Error::failed(format!("cannot use {id}: {error}")))
     }
+
+    /// The payload's visible pairs, name and value, in file order. The `sops_*`
+    /// metadata is left out: `sops_lastmodified` and `sops_mac` legitimately
+    /// change on every write, so a comparison must ignore them.
+    fn pairs(&self, id: &PathId, key: &SecretKey) -> Result<Vec<(String, String)>> {
+        let plain = self.decrypt(id, key)?;
+        let text = String::from_utf8_lossy(&plain);
+        Ok(lockset_core::dotenv::parse(&text)
+            .into_iter()
+            .filter(|(name, _)| !name.starts_with("sops_"))
+            .collect())
+    }
 }
 
 /// The recipient set of a payload: order and duplicates do not matter, so a
@@ -305,6 +317,35 @@ impl Codec for SopsCodec {
         if !landed {
             return Err(Error::tool(format!(
                 "sops set reported success, but {name} reads back differently"
+            )));
+        }
+        Ok(())
+    }
+
+    fn unset_value(&self, id: &PathId, name: &str, key: &SecretKey) -> Result<()> {
+        let before = self.pairs(id, key)?;
+        let selector = format!("[\"{name}\"]");
+        // `--idempotent` keeps a name the payload does not set a success; the
+        // caller decides whether to spawn sops at all.
+        let output = self.run(&["unset", "--idempotent", id.as_str(), &selector], key)?;
+        self.ok(&output, &format!("unset {name} from {id}"), key)?;
+
+        // A write that drops metadata or another value looks like success to
+        // sops, so the result is read back and compared with the input.
+        let after = self.pairs(id, key)?;
+        if after.iter().any(|(key, _)| key == name) {
+            return Err(Error::tool(format!(
+                "sops unset reported success, but {name} still reads back in {id}"
+            )));
+        }
+        let mut expected: Vec<(String, String)> =
+            before.into_iter().filter(|(key, _)| key != name).collect();
+        let mut actual = after;
+        expected.sort();
+        actual.sort();
+        if expected != actual {
+            return Err(Error::tool(format!(
+                "sops unset reported success, but {id} changed beyond {name}"
             )));
         }
         Ok(())

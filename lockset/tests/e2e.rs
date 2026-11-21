@@ -112,6 +112,11 @@ fn identity(dir: &Path, name: &str) -> (String, String) {
 }
 
 fn encrypt(dir: &Path, sops: &Path, recipient: &str) {
+    encrypt_text(dir, sops, recipient, "TOKEN=s3cret\n");
+}
+
+/// Encrypt `plaintext` into `secrets/dev.env` under the map `encrypt` writes.
+fn encrypt_text(dir: &Path, sops: &Path, recipient: &str, plaintext: &str) {
     std::fs::write(
         dir.join(".sops.yaml"),
         format!(
@@ -119,7 +124,7 @@ fn encrypt(dir: &Path, sops: &Path, recipient: &str) {
         ),
     )
     .unwrap();
-    std::fs::write(dir.join("secrets/plain.env"), "TOKEN=s3cret\n").unwrap();
+    std::fs::write(dir.join("secrets/plain.env"), plaintext).unwrap();
     let encrypted = Command::new(sops)
         .args([
             "--encrypt",
@@ -326,6 +331,65 @@ fn an_edit_round_trips_through_the_real_sops_and_editor() {
     assert_eq!(failed.status.code(), Some(4), "{}", stderr(&failed));
     assert!(stderr(&failed).contains("sops edit"), "{}", stderr(&failed));
     assert_eq!(std::fs::read(&payload).unwrap(), before);
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn an_unset_removes_one_key_through_the_real_sops() {
+    let sops = require_tool("sops");
+    if !sops.is_absolute() {
+        return;
+    }
+    let repo = temp_repo("unset");
+    let (key_path, public) = identity(&repo, "admin");
+    let key = std::fs::read_to_string(&key_path)
+        .unwrap()
+        .lines()
+        .find(|line| line.starts_with("AGE-SECRET-KEY-1"))
+        .unwrap()
+        .to_owned();
+    encrypt_text(&repo, &sops, &public, "ONE=first\nTWO=second\n");
+    let env = [("LOCKSET_AGE_KEY", key.as_str())];
+
+    let unset = lockset(
+        &repo,
+        &["unset", "ONE", "--payload", "secrets/dev.env"],
+        &env,
+    );
+    assert_eq!(unset.status.code(), Some(0), "{}", stderr(&unset));
+    assert!(
+        stdout(&unset).contains("removed ONE from secrets/dev.env"),
+        "{}",
+        stdout(&unset)
+    );
+
+    let exported = lockset(&repo, &["export", "--payload", "secrets/dev.env"], &env);
+    assert_eq!(exported.status.code(), Some(0), "{}", stderr(&exported));
+    let values = stdout(&exported);
+    assert!(!values.contains("ONE="), "{values}");
+    assert!(values.contains("TWO=second"), "{values}");
+
+    // The recipient set survives: the payload still has one recipient and one
+    // key, and the same identity opens it.
+    let status = lockset(&repo, &["status", "--json"], &env);
+    assert_eq!(status.status.code(), Some(0), "{}", stderr(&status));
+    let report = stdout(&status);
+    assert!(report.contains("\"keys\": 1"), "{report}");
+    assert!(report.contains("\"recipients\": 1"), "{report}");
+
+    // A second unset of the same key is a no-op success.
+    let again = lockset(
+        &repo,
+        &["unset", "ONE", "--payload", "secrets/dev.env"],
+        &env,
+    );
+    assert_eq!(again.status.code(), Some(0), "{}", stderr(&again));
+    assert!(
+        stderr(&again).contains("ONE is not set in secrets/dev.env; nothing to do"),
+        "{}",
+        stderr(&again)
+    );
 
     let _ = std::fs::remove_dir_all(&repo);
 }

@@ -81,6 +81,14 @@ impl Recorder {
                 "      printf '%s=%s\\n' \"$name\" \"$value\" > \"$RECORDER_PLAIN\"\n",
                 "      exit 0 ;;\n",
                 "    edit) exit 0 ;;\n",
+                "    unset)\n",
+                "      name=$(printf '%s' \"$4\" | tr -d '[]\"')\n",
+                "      path=\"$3\"\n",
+                "      grep -v \"^${name}=\" \"$path\" > \"$path.tmp\"\n",
+                "      mv \"$path.tmp\" \"$path\"\n",
+                "      grep -v \"^${name}=\" \"$RECORDER_PLAIN\" > \"$RECORDER_PLAIN.tmp\"\n",
+                "      mv \"$RECORDER_PLAIN.tmp\" \"$RECORDER_PLAIN\"\n",
+                "      exit 0 ;;\n",
                 "  esac\n",
                 "done\n",
                 "exit 1\n"
@@ -144,7 +152,7 @@ fn stderr(output: &Output) -> String {
 #[test]
 fn the_identity_never_reaches_sops_argv_or_an_inherited_variable() {
     let recorder = Recorder::new("contract");
-    let operations: [&[&str]; 6] = [
+    let operations: [&[&str]; 7] = [
         &["status"],
         &["export", "--payload", "secrets/dev.env"],
         &[
@@ -163,6 +171,7 @@ fn the_identity_never_reaches_sops_argv_or_an_inherited_variable() {
         ],
         &["rotate", "--all"],
         &["edit", "--payload", "secrets/dev.env"],
+        &["unset", "TOKEN", "--payload", "secrets/dev.env"],
     ];
 
     for args in operations {
@@ -244,6 +253,10 @@ fn the_identity_never_reaches_sops_argv_or_an_inherited_variable() {
     assert!(
         argv_lines.contains(&"edit secrets/dev.env".to_owned()),
         "edit argv missing: {argv_lines:?}"
+    );
+    assert!(
+        argv_lines.contains(&r#"unset --idempotent secrets/dev.env ["TOKEN"]"#.to_owned()),
+        "unset argv missing: {argv_lines:?}"
     );
 
     // `edit` is the one child that starts the user's editor, so it carries

@@ -131,6 +131,14 @@ pub enum Command {
         #[arg(long = "if-absent")]
         if_absent: bool,
     },
+    /// Remove one key from a payload and re-encrypt it
+    Unset {
+        /// Key name in the payload
+        key: String,
+        /// Payload to write; default repo.default_payloads (exactly one) from lockset.toml
+        #[arg(long = "payload", value_name = "PATH")]
+        payload: Option<String>,
+    },
     /// Edit a payload through $SOPS_EDITOR, then re-encrypt it
     Edit {
         /// Payload to edit (default: the single repo.default_payloads entry)

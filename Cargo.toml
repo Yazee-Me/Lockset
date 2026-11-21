@@ -21,9 +21,9 @@ secrecy = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 regex = "1"
-sha2 = "0.11"
+sha2 = "0.10"
 thiserror = "2"
-toml = "1.2"
+toml = "0.8"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 rpassword = "7"

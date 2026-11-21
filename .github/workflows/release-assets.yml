@@ -38,7 +38,7 @@ jobs:
           # `sha256sum -c` and `shasum -a 256 -c` compatible.
           : > SHA256SUMS
           for sum in assets/*.sha256; do
-            awk '{ name = $2; sub(/^\*/, "", name); print $1 "  " name }' "$sum" >> SHA256SUMS
+            awk 'NF { name = $2; sub(/^\*/, "", name); print $1 "  " name }' "$sum" >> SHA256SUMS
           done
           test -s SHA256SUMS
           cat SHA256SUMS
@@ -124,6 +124,7 @@ jobs:
           if ($verified -eq 0) { throw "no checksums in artifacts" }
           if (Test-Path artifacts/SHA256SUMS) {
             Get-Content artifacts/SHA256SUMS | ForEach-Object {
+              if ([string]::IsNullOrWhiteSpace($_)) { return }
               $expected, $name = $_ -split '\s+', 2
               $file = Join-Path "artifacts" $name.Trim()
               $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()

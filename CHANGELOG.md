@@ -15,6 +15,20 @@
   file (mode 0600). A payload that comes back unencrypted, with other
   recipients, with a plaintext value, or that no longer decrypts is refused with
   exit 4, and a non-zero editor exit leaves the payload byte-identical.
+- `grant` and `person add` keep the identity registry current: a key that is
+  not in `lockset.toml` is appended as an `[[identities]]` entry (label and
+  public key, no roles) in the same transactional plan as the `.sops.yaml`
+  recipient and the payload re-wrap. `revoke` and `person remove` delete the
+  entry with the recipient. Once a registry exists a new recipient needs no
+  comment, and `status`/`check` report no registry/map drift for it.
+
+### Fixed
+
+- `grant` no longer refuses the whole map because one creation rule declares no
+  recipients. A rule with no recipient line has no identity to grant to, so it
+  stays byte-identical and does not block the age rules. A rule keyed by another
+  backend (`kms`, `pgp`, …) still refuses, and an explicit `--only` on either
+  still refuses.
 
 ### Internal
 

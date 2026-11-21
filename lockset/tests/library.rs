@@ -182,6 +182,8 @@ fn injected_ports_replace_custody_and_codec() {
         codec: SopsCodec::new(repo.path(), "sops", lockset_core::MIN_VERSION),
         custody: Box::new(MemoryCustody::new(Some(key))),
         config,
+        config_path: None,
+        config_text: None,
     };
     let cli = Cli::parse_from(["lockset", "--repo", repo.path().to_str().unwrap(), "status"]);
     let inputs = Inputs::default();

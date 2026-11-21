@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context as AnyhowContext, Result};
 use lockset_core::config::{Config, CustodySpec};
 use lockset_core::sopsfile::SopsFile;
-use lockset_core::{meta, Custody, IdentityView, PayloadError, Repo, SecretKey, Snapshot};
+use lockset_core::{meta, Custody, IdentityView, PathId, PayloadError, Repo, SecretKey, Snapshot};
 use lockset_tools::custody::{EnvCustody, FileCustody, KeyringCustody, UnconfiguredCustody};
 use lockset_tools::fs_repo::FsRepo;
 use lockset_tools::lock::Lock;
@@ -28,6 +28,11 @@ pub struct Context {
     pub codec: SopsCodec,
     pub custody: Box<dyn Custody>,
     pub config: Config,
+    /// The config file, when one was read; `None` for the implicit default.
+    pub config_path: Option<PathBuf>,
+    /// The config file's bytes, kept so a registry edit can plan a rewrite
+    /// without reading the file again.
+    pub config_text: Option<String>,
 }
 
 /// The variable that selects custody when no flag does.
@@ -38,7 +43,11 @@ impl Context {
     /// nothing here reads the process environment.
     pub fn detect(cli: &Cli, inputs: &Inputs) -> Result<Self> {
         let root = find_root(repo_start(cli, inputs), inputs.cwd())?;
-        let config = load_config(cli.config.as_deref(), &root, inputs)?;
+        let LoadedConfig {
+            config,
+            path: config_path,
+            text: config_text,
+        } = load_config(cli.config.as_deref(), &root, inputs)?;
         let spec = custody_spec(cli, inputs);
         let custody = make_custody(
             spec.as_deref(),
@@ -65,6 +74,8 @@ impl Context {
             root,
             custody,
             config,
+            config_path,
+            config_text,
         })
     }
 
@@ -101,9 +112,17 @@ fn sops_bin(cli: &Cli, config: &Config, inputs: &Inputs) -> String {
         .unwrap_or_else(|| config.codec.sops.clone())
 }
 
+/// A config file that was read, plus its bytes so a registry edit can plan a
+/// rewrite from the same snapshot.
+struct LoadedConfig {
+    config: Config,
+    path: Option<PathBuf>,
+    text: Option<String>,
+}
+
 /// `--config`, then `LOCKSET_CONFIG`, then `<root>/lockset.toml`. An explicit
 /// file must exist; the implicit one is optional.
-fn load_config(explicit: Option<&Path>, root: &Path, inputs: &Inputs) -> Result<Config> {
+fn load_config(explicit: Option<&Path>, root: &Path, inputs: &Inputs) -> Result<LoadedConfig> {
     let (path, required) = match explicit {
         Some(path) => (path.to_path_buf(), true),
         None => match inputs.var("LOCKSET_CONFIG") {
@@ -113,7 +132,11 @@ fn load_config(explicit: Option<&Path>, root: &Path, inputs: &Inputs) -> Result<
     };
     if !path.is_file() {
         if !required {
-            return Ok(Config::default());
+            return Ok(LoadedConfig {
+                config: Config::default(),
+                path: None,
+                text: None,
+            });
         }
         return Err(usage::error(format!(
             "no such config file: {} (--config or LOCKSET_CONFIG)",
@@ -122,7 +145,13 @@ fn load_config(explicit: Option<&Path>, root: &Path, inputs: &Inputs) -> Result<
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|error| usage::error(format!("cannot read {}: {error}", path.display())))?;
-    Config::parse(&text).map_err(|error| usage::error(format!("{}: {error}", path.display())))
+    let config = Config::parse(&text)
+        .map_err(|error| usage::error(format!("{}: {error}", path.display())))?;
+    Ok(LoadedConfig {
+        config,
+        path: Some(path),
+        text: Some(text),
+    })
 }
 
 fn find_root(start: Option<PathBuf>, cwd: &Path) -> Result<PathBuf> {
@@ -252,8 +281,25 @@ fn writes(command: &Command) -> bool {
     )
 }
 
+/// `path` as a repo-relative `PathId`, when it names a file inside `root`.
+/// A config outside the repository has no `PathId`; read-only commands still
+/// run, and only a registry edit refuses.
+fn repo_relative(path: &Path, root: &Path) -> Option<PathId> {
+    let absolute = path.canonicalize().ok()?;
+    let relative = absolute.strip_prefix(root).ok()?;
+    PathId::parse(&relative.to_string_lossy().replace('\\', "/")).ok()
+}
+
 pub fn snapshot(context: &Context) -> Result<Snapshot> {
     let mut digests = std::collections::BTreeMap::new();
+
+    let config_document = match (&context.config_path, &context.config_text) {
+        (Some(path), Some(text)) => repo_relative(path, &context.root).map(|id| {
+            digests.insert(id.clone(), lockset_core::digest(text.as_bytes()));
+            (id, text.clone())
+        }),
+        _ => None,
+    };
 
     let sops_path = context.config.sops_config.clone();
     let sops_bytes = context.repo.read(&sops_path)?;
@@ -323,6 +369,9 @@ pub fn snapshot(context: &Context) -> Result<Snapshot> {
         .with_sops_path(sops_path)
         .with_digests(digests)
         .with_payload_errors(payload_errors);
+    if let Some((path, text)) = config_document {
+        snapshot = snapshot.with_config_document(path, text);
+    }
     if let Some(error) = identity_error {
         snapshot = snapshot.identity_unavailable(error);
     }
@@ -586,6 +635,8 @@ mod tests {
             codec: SopsCodec::new(&repo.0, "sops", lockset_core::MIN_VERSION),
             custody: Box::new(FailingCustody),
             config: Config::default(),
+            config_path: None,
+            config_text: None,
         };
 
         let snapshot = snapshot(&context).expect("a custody failure must not abort a report");

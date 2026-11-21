@@ -279,6 +279,125 @@ impl IdentityRegistry {
     }
 }
 
+/// Append a `[[identities]]` block to `lockset.toml`, leaving every other byte
+/// alone. `roles` is omitted so a new entry carries no role; the result is
+/// parsed before it is returned, so a rewrite can never produce a file Lockset
+/// would refuse.
+pub fn append_identity(text: &str, identity: &Identity) -> Result<String> {
+    let mut out = String::with_capacity(text.len() + 96);
+    out.push_str(text);
+    if !out.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        // One blank line separates the block from whatever came before it.
+        if !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!(
+        "[[identities]]\nlabel = \"{}\"\npublic = \"{}\"\n",
+        identity.label, identity.public
+    ));
+    Config::parse(&out).map_err(|error| {
+        Error::invalid(format!(
+            "cannot register {} in lockset.toml: {error}",
+            identity.public
+        ))
+    })?;
+    Ok(out)
+}
+
+/// Remove the `[[identities]]` block that registers `key`, from its header
+/// through its last key/value line (a blank line or comment before the next
+/// table header belongs to that block). At most one extra blank line is
+/// collapsed; every other line is preserved byte for byte. The result is
+/// parsed before it is returned.
+pub fn remove_identity(text: &str, key: &PubKey) -> Result<String> {
+    let Some((start, end)) = identity_block(text, key) else {
+        return Err(Error::invalid(format!(
+            "{key} is not registered in lockset.toml"
+        )));
+    };
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..start]);
+    let tail = &text[end..];
+    // The block sat between blank lines: keep one separator, not two.
+    let joined = if out.is_empty() || (out.ends_with("\n\n") && tail.starts_with('\n')) {
+        tail.strip_prefix('\n').unwrap_or(tail)
+    } else {
+        tail
+    };
+    out.push_str(joined);
+    if joined.is_empty() && out.ends_with("\n\n") {
+        out.pop();
+    }
+    Config::parse(&out).map_err(|error| {
+        Error::invalid(format!("cannot remove {key} from lockset.toml: {error}"))
+    })?;
+    Ok(out)
+}
+
+/// The byte range of the `[[identities]]` block that registers `key`, header
+/// included, ending after its last key/value line. A blank line or comment
+/// before the next table header belongs to the next block, not this one, so a
+/// removal never carries it away.
+fn identity_block(text: &str, key: &PubKey) -> Option<(usize, usize)> {
+    let mut lines: Vec<(usize, usize, &str)> = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        lines.push((offset, offset + line.len(), line));
+        offset += line.len();
+    }
+    let headers: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, _, line))| line.trim_start().starts_with('['))
+        .map(|(index, _)| index)
+        .collect();
+    for (position, &start) in headers.iter().enumerate() {
+        let end = headers.get(position + 1).copied().unwrap_or(lines.len());
+        if !lines[start].2.trim_start().starts_with("[[identities]]") {
+            continue;
+        }
+        if !lines[start..end]
+            .iter()
+            .any(|(_, _, line)| registers(line, key))
+        {
+            continue;
+        }
+        let mut last = start;
+        for (index, (_, _, line)) in lines.iter().enumerate().take(end).skip(start) {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                last = index;
+            }
+        }
+        return Some((lines[start].0, lines[last].1));
+    }
+    None
+}
+
+/// Whether a TOML line is `public = "<key>"`.
+fn registers(line: &str, key: &PubKey) -> bool {
+    let Some((name, value)) = line.split_once('=') else {
+        return false;
+    };
+    if name.trim() != "public" {
+        return false;
+    }
+    let value = value.trim();
+    let quoted = value
+        .strip_prefix('"')
+        .and_then(|rest| rest.split('"').next())
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|rest| rest.split('\'').next())
+        });
+    quoted.or_else(|| value.split_whitespace().next()) == Some(key.as_str())
+}
+
 /// Label conventions the model itself consults (the admin coverage check).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Labels {
@@ -767,6 +886,7 @@ payload_globs = ["secrets/*.env", "../outside/*.env"]
 
     const ADMIN: &str = "age1p243ylp98pr939vj8eqsmaczq8c9gwxwnlupz9pvelpfj6ha0cgqjsue6x";
     const ALICE: &str = "age1vvq9jvcxj0xw2jl4x0az4ndvg7ew39c2pge0u8scdpwejlyazyjqqcs64q";
+    const CAROL: &str = "age1y4gs9hk93n3mpvhwydaq7uz4mn3a0esf0wfh3md2v2qz4hye9frsfpelwh";
 
     #[test]
     fn identities_parse_with_labels_keys_and_roles() {
@@ -859,6 +979,119 @@ public = "{ALICE}"
             bad_role.to_string().contains("identities[0].roles"),
             "{bad_role}"
         );
+    }
+
+    fn identity(label: &str, key: &str, roles: &[&str]) -> Identity {
+        Identity {
+            label: Label::parse(label).unwrap(),
+            public: PubKey::parse(key).unwrap(),
+            roles: roles
+                .iter()
+                .map(|role| Label::parse(role).unwrap())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn append_identity_keeps_every_other_line_and_parses() {
+        let before =
+            "# conventions\n[codec]\nsops = \"sops\" # pinned\n\n[labels]\nadmin = \"ops\"\n";
+        let after = append_identity(before, &identity("dev-alice", ALICE, &[])).unwrap();
+
+        assert_eq!(
+            after,
+            format!("{before}\n[[identities]]\nlabel = \"dev-alice\"\npublic = \"{ALICE}\"\n")
+        );
+        let config = Config::parse(&after).unwrap();
+        assert_eq!(
+            config
+                .registry
+                .label_for(&PubKey::parse(ALICE).unwrap())
+                .map(Label::as_str),
+            Some("dev-alice")
+        );
+        assert!(config.registry.identities()[0].roles.is_empty());
+    }
+
+    #[test]
+    fn append_identity_creates_the_registry_in_an_empty_file() {
+        let after = append_identity("", &identity("admin", ADMIN, &[])).unwrap();
+
+        assert!(after.starts_with("[[identities]]\n"), "{after}");
+        assert!(!after.starts_with('\n'), "no leading blank line: {after}");
+        assert_eq!(
+            Config::parse(&after).unwrap().registry.identities().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn remove_identity_keeps_the_other_entries_and_their_roles() {
+        let text = format!(
+            "[codec]\nsops = \"sops\"\n\n[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\nroles = [\"admin\"]\n\n[[identities]]\nlabel = \"dev-alice\"\npublic = \"{ALICE}\"\nroles = [\"ci\"]\n\n[[identities]]\nlabel = \"dev-carol\"\npublic = \"{CAROL}\"\n"
+        );
+        let after = remove_identity(&text, &PubKey::parse(ALICE).unwrap()).unwrap();
+
+        assert!(
+            after.contains(&format!(
+                "[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\nroles = [\"admin\"]\n"
+            )),
+            "{after}"
+        );
+        assert!(
+            after.contains(&format!(
+                "[[identities]]\nlabel = \"dev-carol\"\npublic = \"{CAROL}\"\n"
+            )),
+            "{after}"
+        );
+        assert!(!after.contains(ALICE), "{after}");
+        assert_eq!(after.matches("[[identities]]").count(), 2, "{after}");
+        assert!(!after.contains("\n\n\n"), "one blank line stays: {after}");
+
+        let config = Config::parse(&after).unwrap();
+        assert_eq!(config.registry.identities().len(), 2);
+        assert!(config.registry.identities()[0].has_role("admin"));
+    }
+
+    #[test]
+    fn remove_identity_preserves_comments_around_the_block() {
+        let text = format!(
+            "# top\n[codec]\nsops = \"sops\"\n\n# the admin entry\n[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\n\n# a person\n[[identities]]\nlabel = \"dev-alice\"\npublic = \"{ALICE}\"\n\n# footer\n"
+        );
+        let after = remove_identity(&text, &PubKey::parse(ADMIN).unwrap()).unwrap();
+
+        assert!(
+            after.starts_with("# top\n[codec]\nsops = \"sops\"\n"),
+            "{after}"
+        );
+        assert!(after.contains("# the admin entry\n"), "{after}");
+        assert!(after.contains("# a person\n[[identities]]"), "{after}");
+        assert!(after.contains("# footer"), "{after}");
+        assert!(!after.contains(ADMIN), "{after}");
+        Config::parse(&after).unwrap();
+    }
+
+    #[test]
+    fn removing_an_absent_key_is_an_error() {
+        let text = format!("[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\n");
+
+        let error = remove_identity(&text, &PubKey::parse(ALICE).unwrap()).unwrap_err();
+
+        assert!(error.to_string().contains("not registered"), "{error}");
+        assert!(error.to_string().contains(ALICE), "{error}");
+    }
+
+    #[test]
+    fn a_malformed_registry_rewrite_never_escapes() {
+        // A `[` value that looks like a table header must not split the block.
+        let text = format!(
+            "[[identities]]\nlabel = \"admin\"\npublic = \"{ADMIN}\"\nroles = [\"admin\"]\n"
+        );
+        let appended = append_identity(&text, &identity("admin", ALICE, &[])).unwrap_err();
+        assert!(appended.to_string().contains("lockset.toml"), "{appended}");
+
+        let empty = remove_identity("", &PubKey::parse(ADMIN).unwrap()).unwrap_err();
+        assert!(empty.to_string().contains("not registered"), "{empty}");
     }
 
     #[test]

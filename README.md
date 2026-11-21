@@ -322,11 +322,19 @@ lockset run --custody file:/run/secrets/age-key --payload secrets/dev.env -- ./t
 ### Labels and the identity registry
 
 The `[[identities]]` entries are the source of truth for labels: `who` lists
-them, `grant` requires the identity to be registered, and `revoke --label`
-resolves through them. Trailing `# label,...` comments in the sops config are a
-**migration input only** once a registry exists: a comment label that conflicts
-with the registry (or names a key the registry does not know) is reported as
-drift, never silently repaired.
+them and `revoke --label` resolves through them. `grant` and `person add` keep
+the registry current: a key it does not know is appended as an `[[identities]]`
+entry (label and public key, no roles) in the same plan as the `.sops.yaml`
+recipient and the payload re-wrap, and `revoke` and `person remove` delete the
+entry together with the recipient. A key that is already registered must keep
+its label, and a label already registered to another key is refused; register a
+role by editing the entry.
+
+Trailing `# label,...` comments in the sops config are a **migration input
+only** once a registry exists: a comment label that conflicts with the registry
+(or names a key the registry does not know) is reported as drift, never
+silently repaired. A new recipient needs no comment then; the registry carries
+its label.
 
 Convert a comment-labelled repository once:
 
@@ -351,6 +359,11 @@ and what still works: `rotate`, `set`, and `unset` do, because they need no age
 recipients. `grant` and `revoke` refuse only a rule they would have to rewrite —
 the message names the rule and the backend and points at `--only` — so the rest
 of a mixed map stays manageable.
+
+A creation rule with no recipient line at all (`- path_regex:` and nothing
+else) is not a backend: it has no identity to grant to, so a default `grant`
+leaves its line byte-identical and does not let it block the age rules. An
+explicit `--only` that targets it still refuses, and `revoke` leaves it alone.
 
 ```sh
 lockset --config ./ci/lockset.toml doctor

@@ -20,6 +20,9 @@ RUN cargo build --release --locked -p lockset --bin lockset
 # The sops release assets and their checksums from
 # https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.checksums.txt
 FROM debian:bookworm-slim AS sops
+# BuildKit sets TARGETARCH for the requested platform; it must be re-declared
+# in this stage or it is empty and the image gets the amd64 sops.
+ARG TARGETARCH
 ARG SOPS_VERSION=3.13.3
 ARG SOPS_SHA256_AMD64=e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
 ARG SOPS_SHA256_ARM64=53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77

@@ -22,7 +22,10 @@ targets = [
 ]
 checksum = "sha256"
 # GitHub attestations are the SLSA provenance for every uploaded artifact.
-github-attestations = true
+# They are unavailable to a private repository on the current plan, so they
+# stay off until Lockset is public; the checksums and optional minisign
+# signatures still cover the release.
+github-attestations = false
 # A tag run is the release; PRs keep running the ordinary CI only.
 pr-run-mode = "skip"
 

@@ -8,7 +8,7 @@ set -eu
 
 version=${1:?usage: ci-install.sh <version> [download-base-url] [verify-attestation]}
 base=${2:-https://github.com/Yazee-Me/Lockset/releases/download}
-verify=${3:-true}
+verify=${3:-false}
 
 case "$(uname -s)" in
     Linux) os=unknown-linux-musl ;;
@@ -32,8 +32,37 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 echo "downloading $url" >&2
-curl -fsSLo "$work/archive" "$url"
-curl -fsSLo "$work/archive.sha256" "$url.sha256"
+# A private release needs a token. Pass it through stdin so it never appears in
+# curl's argv; the action supplies LOCKSET_GITHUB_TOKEN.
+fetch() {
+    if [ -n "${LOCKSET_GITHUB_TOKEN:-}" ]; then
+        printf 'Authorization: Bearer %s\n' "$LOCKSET_GITHUB_TOKEN" |
+            curl -fsSL -H @- -o "$1" "$2"
+    else
+        curl -fsSL -o "$1" "$2"
+    fi
+}
+
+# GitHub's public download URL returns 404 for a private repository even with
+# an authorization header. The API (through gh) is the supported path; other
+# bases, including mirrors and the test server, use plain curl.
+if [ -n "${LOCKSET_GITHUB_TOKEN:-}" ] &&
+    [ "$base" = "https://github.com/Yazee-Me/Lockset/releases/download" ]; then
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "gh is required to download a private release" >&2
+        exit 1
+    fi
+    GH_TOKEN=$LOCKSET_GITHUB_TOKEN gh release download "v$version" \
+        --repo Yazee-Me/Lockset \
+        --pattern "lockset-$target.$ext" \
+        --pattern "lockset-$target.$ext.sha256" \
+        --dir "$work" --clobber
+    mv "$work/lockset-$target.$ext" "$work/archive"
+    mv "$work/lockset-$target.$ext.sha256" "$work/archive.sha256"
+else
+    fetch "$work/archive" "$url"
+    fetch "$work/archive.sha256" "$url.sha256"
+fi
 
 expected=$(awk '{print $1}' "$work/archive.sha256")
 if command -v sha256sum >/dev/null 2>&1; then

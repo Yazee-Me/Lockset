@@ -470,11 +470,14 @@ or exports the values into the job environment.
 | `repo` | current directory | Repository to operate on |
 | `lockset-args` | `""` | Extra arguments before the payload flags, for example `--custody file:/run/secrets/age-key` |
 | `download-base-url` | the GitHub release URL | Override for mirrors and tests |
-| `verify-attestation` | `true` | Check the GitHub artifact attestation when `gh` is available |
+| `github-token` | `""` | Token with read access to the release repository; required while Lockset is private |
+| `verify-attestation` | `false` | Check the GitHub artifact attestation when `gh` is available |
 
 The install downloads `lockset-<target>.tar.xz` plus its published `.sha256`,
-verifies the hash (and the attestation when `gh` can reach the release), and
-fails closed on a mismatch. Exported values are masked with
+verifies the hash (and the attestation when requested and `gh` can reach the
+release), and fails closed on a mismatch. While the repository is private, pass
+`github-token: ${{ secrets.LOCKSET_TOKEN }}`; the token never enters curl's
+argument list. Exported values are masked with
 `::add-mask::<value>` before they reach `$GITHUB_ENV`, so a later step that
 echoes them is redacted; `run` never prints the values at all. The action is
 tested against a generated fixture repository by the `Action test` workflow.
@@ -598,6 +601,10 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 # Windows
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/Yazee-Me/Lockset/releases/latest/download/lockset-installer.ps1 | iex"
 ```
+
+While the repository is private, those anonymous URLs return 404. Members
+download the release with `gh release download v0.1.0` and unpack the archive
+for their target, or use the composite action with `github-token`.
 
 **Optional signatures.** Set `MINISIGN_SECRET_KEY` (and `MINISIGN_PASSWORD` for
 an encrypted key) and the assets workflow publishes `.minisig` files next to

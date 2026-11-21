@@ -71,11 +71,17 @@ jobs:
           fi
           echo "a bad checksum was rejected"
 
+      - name: A private-release token reaches the download
+        env:
+          LOCKSET_GITHUB_TOKEN: dummy-token
+        run: scripts/ci-install.sh 0.1.0 http://127.0.0.1:8100 false
+
       - name: The action runs a command with the payload
         uses: ./
         with:
           version: 0.1.0
           download-base-url: http://127.0.0.1:8100
+          github-token: dummy-token
           verify-attestation: "false"
           repo: ${{ runner.temp }}/repo
           payload: secrets/dev.env

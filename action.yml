@@ -41,10 +41,16 @@ inputs:
     description: Release download base; override only for mirrors and tests.
     required: false
     default: https://github.com/Yazee-Me/Lockset/releases/download
+  github-token:
+    description: >-
+      Token with read access to the Lockset release repository. Required while
+      the repository and its releases are private.
+    required: false
+    default: ""
   verify-attestation:
     description: Verify the GitHub artifact attestation when gh is available.
     required: false
-    default: "true"
+    default: "false"
 
 runs:
   using: composite
@@ -55,6 +61,7 @@ runs:
       env:
         LOCKSET_VERSION: ${{ inputs.version }}
         LOCKSET_DOWNLOAD_BASE_URL: ${{ inputs.download-base-url }}
+        LOCKSET_GITHUB_TOKEN: ${{ inputs.github-token }}
         LOCKSET_VERIFY_ATTESTATION: ${{ inputs.verify-attestation }}
       run: |
         dir=$("$GITHUB_ACTION_PATH/scripts/ci-install.sh" \

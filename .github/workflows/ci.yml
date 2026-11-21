@@ -74,6 +74,9 @@ jobs:
   supply-chain:
     name: Advisories, licenses, bans
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - name: cargo-deny
@@ -129,9 +132,12 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name=="lockset") | .version')
           body=$(dist plan --tag="v$version" --output-format=json | jq -r '.announcement_github_body // ""')
-          printf '%s\n' "$body" | grep -q 'Breaking changes' \
+          # Read from a file: `grep -q` exits as soon as it matches, and a
+          # larger body can then make printf fail on the closed pipe.
+          printf '%s\n' "$body" > "$RUNNER_TEMP/release-body.md"
+          grep -q 'Breaking changes' "$RUNNER_TEMP/release-body.md" \
             || { echo "release notes for v$version have no Breaking changes section" >&2; exit 1; }
-          printf '%s\n' "$body" | grep -q 'Identity and sops lookup' \
+          grep -q 'Identity and sops lookup' "$RUNNER_TEMP/release-body.md" \
             || { echo "release notes for v$version do not document the identity/sops rename" >&2; exit 1; }
 
   msrv:

@@ -1,0 +1,41 @@
+{
+  "skill_name": "design-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Here's a class from our reporting pipeline. It works, but it's getting hard to change and hard to test. Can you review its design and tell me what should be improved and how?\n\n```python\nimport csv\nimport json\nimport statistics\n\nclass ReportProcessor:\n    def __init__(self, input_path, output_path):\n        self.input_path = input_path\n        self.output_path = output_path\n\n    def run(self):\n        data = self._load()\n        stats = self._compute(data)\n        text = self._format(stats)\n        self._save(text)\n\n    def _load(self):\n        with open(self.input_path) as f:\n            return list(csv.DictReader(f))\n\n    def _compute(self, rows):\n        values = [float(r['amount']) for r in rows if r['amount']]\n        return {\n            'count': len(values),\n            'mean': statistics.mean(values),\n            'total': sum(values),\n        }\n\n    def _format(self, stats):\n        return json.dumps(stats, indent=2)\n\n    def _save(self, text):\n        with open(self.output_path, 'w') as f:\n            f.write(text)\n```",
+      "expected_output": "A report identifying that the class does too many unrelated jobs (I/O, parsing, computing, formatting) — an SRP violation — and proposing a split into focused components with injected dependencies.",
+      "files": [],
+      "assertions": [
+        "Identifies that ReportProcessor has too many unrelated responsibilities and names SRP (or 'single responsibility')",
+        "Proposes splitting into focused components (e.g. loader, calculator, formatter, writer) and/or injecting dependencies",
+        "Report carries a severity/priority level and a concrete fix per finding",
+        "Report is read-only: discusses the code but does not rewrite it or produce an edited code file"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "We're about to add several new payment methods, and every time we do it feels like we have to touch the same method in a dozen careful places. Can you review this payment processing code and tell me what design changes would make adding new methods easier?\n\n```python\nclass PaymentProcessor:\n    def process(self, payment_type, amount):\n        if payment_type == 'credit_card':\n            fee = amount * 0.03\n            return amount - fee, 'charged card'\n        elif payment_type == 'paypal':\n            fee = amount * 0.04\n            return amount - fee, 'charged paypal'\n        elif payment_type == 'bank_transfer':\n            fee = amount * 0.01\n            return amount - fee, 'charged bank'\n        else:\n            raise ValueError(f'Unknown payment type: {payment_type}')\n\n    def refund(self, payment_type, amount):\n        if payment_type == 'credit_card':\n            return amount * 0.97\n        elif payment_type == 'paypal':\n            return amount * 0.96\n        elif payment_type == 'bank_transfer':\n            return amount * 0.99\n        else:\n            raise ValueError(f'Unknown payment type: {payment_type}')\n```",
+      "expected_output": "A report identifying the open/closed violation (adding a type means editing existing methods) and proposing the Strategy pattern / polymorphism with a registry so new payment methods are added without touching existing code.",
+      "files": [],
+      "assertions": [
+        "Identifies that adding a new payment type requires editing process()/refund() (open/closed violation) and names OCP (or 'open/closed')",
+        "Proposes Strategy / polymorphism / a registry so new payment methods are added without editing existing methods",
+        "Report carries a severity/priority level and a concrete fix per finding",
+        "Report is read-only: discusses the code but does not rewrite it or produce an edited code file"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Can you review this class hierarchy for design problems and suggest how to fix them?\n\n```python\nclass Bird:\n    def __init__(self, name):\n        self.name = name\n\n    def fly(self):\n        return f'{self.name} is flying'\n\nclass Penguin(Bird):\n    def fly(self):\n        raise NotImplementedError(\"Penguins can't fly\")\n```",
+      "expected_output": "A report identifying that Penguin is not substitutable for Bird (Liskov Substitution violation) and proposing composition over inheritance — e.g. moving flight behaviour into a collaborator or removing fly() from the base.",
+      "files": [],
+      "assertions": [
+        "Identifies that Penguin is not substitutable for Bird and names LSP (or 'Liskov')",
+        "Proposes composition over inheritance (or moving fly() out of the base)",
+        "Report carries a severity/priority level and a concrete fix per finding",
+        "Report is read-only: discusses the code but does not rewrite it or produce an edited code file"
+      ]
+    }
+  ]
+}

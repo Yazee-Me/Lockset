@@ -6,6 +6,7 @@ use crate::config::IdentityRegistry;
 use crate::meta::PayloadMeta;
 use crate::model::{CustodyKind, Label, PathId, PubKey};
 use crate::sopsfile::SopsFile;
+use crate::{Error, Result};
 
 /// The local private key, when custody has one.
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +46,11 @@ pub struct Snapshot {
     /// The configured identity registry. When it is not empty, its labels win
     /// over `.sops.yaml` comments, which become a migration input.
     pub registry: IdentityRegistry,
+    /// The config file, repo-relative, when this snapshot may rewrite it. A
+    /// registry edit needs the file; read-only reports do not.
+    pub config_path: Option<PathId>,
+    /// The bytes of that config file, as read for this snapshot.
+    pub config_text: Option<String>,
 }
 
 impl Snapshot {
@@ -65,6 +71,8 @@ impl Snapshot {
             digests: BTreeMap::new(),
             payload_errors: Vec::new(),
             registry: IdentityRegistry::default(),
+            config_path: None,
+            config_text: None,
         }
     }
 
@@ -72,6 +80,25 @@ impl Snapshot {
     pub fn with_registry(mut self, registry: IdentityRegistry) -> Self {
         self.registry = registry;
         self
+    }
+
+    /// Record the config file this snapshot may rewrite.
+    pub fn with_config_document(mut self, path: PathId, text: String) -> Self {
+        self.config_path = Some(path);
+        self.config_text = Some(text);
+        self
+    }
+
+    /// The config file and its bytes, for a plan that edits the registry. A
+    /// config outside the repository (or no file at all) has nothing to plan.
+    pub fn config_document(&self) -> Result<(&PathId, &str)> {
+        match (&self.config_path, &self.config_text) {
+            (Some(path), Some(text)) => Ok((path, text)),
+            _ => Err(Error::refused(
+                "the registry lives in lockset.toml, but this snapshot has no editable config \
+                 document; pass --config with the file inside the repository",
+            )),
+        }
     }
 
     /// Record the sops config file this snapshot came from.
@@ -206,9 +233,15 @@ impl Snapshot {
     }
 
     /// Drift between `.sops.yaml` and the payload metadata, plus unlabelled
-    /// recipients. Both are reported, never repaired here.
+    /// recipients. Both are reported, never repaired here. Comments are
+    /// migration-only once a registry exists, so an unlabelled recipient is
+    /// not drift then: the registry carries the label.
     pub fn drift(&self) -> Vec<String> {
-        let mut notes = self.sops.drift();
+        let mut notes = if self.registry.is_empty() {
+            self.sops.drift()
+        } else {
+            Vec::new()
+        };
         if !self.registry.is_empty() {
             for rule in self.sops.rules() {
                 for recipient in &rule.recipients {

@@ -22,6 +22,11 @@ the API docs at <https://docs.rs/lockset>.
   terminal it prompts with the input hidden; a pipeline names its source with
   `--stdin`, `--from-env NAME`, or `--value-file PATH`, and an empty value needs
   `--allow-empty`.
+- Opens a payload in `$SOPS_EDITOR` (default `vim -n`) and re-encrypts it with
+  the same recipients: `edit`. A failed editor leaves the payload byte-identical,
+  and lockset never writes the plaintext itself.
+- Removes one key and re-encrypts the payload with the same recipients, keeping
+  every other value: `unset`. A key the payload does not set is a no-op success.
 - Rotates data keys without touching values: `rotate`.
 - Grants and revokes recipients, rewriting only the `age:` line of
   `.sops.yaml`, re-wrapping the affected payloads, and rotating the data key on
@@ -68,9 +73,10 @@ Every mutating command prints its plan; `--dry-run` stops there.
   any sops call. See “Portability”.
 - The only payload format is dotenv (`.env`). Every non-hidden file matched by
   `repo.payload_globs` is reported as an unsupported payload in `status` and
-  `check` when it is another format, and `run`/`set` reject it with a message
-  naming the format, so no payload is silently ignored or half-counted. Hidden
-  files (`.gitkeep`, editor temporaries) are not payloads.
+  `check` when it is another format, and `run`/`set`/`edit`/`unset` reject it
+  with a message naming the format, so no payload is silently ignored or
+  half-counted.
+  Hidden files (`.gitkeep`, editor temporaries) are not payloads.
 
 ## Use
 
@@ -92,6 +98,9 @@ printf '%s' "$NEW_KEY" | lockset set NEW_KEY --payload secrets/dev.env --stdin
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY
 lockset set NEW_KEY --payload secrets/dev.env --value-file /run/secrets/new-key
 lockset set NEW_KEY --payload secrets/dev.env --from-env NEW_KEY --if-absent  # keep a value already set
+lockset edit --payload secrets/dev.env     # $SOPS_EDITOR, default vim -n
+lockset unset OLD_KEY --payload secrets/dev.env   # remove one key; a missing key is a no-op
+lockset unset secrets/prod/infra.env OLD_KEY      # payload-first form, same command
 lockset --dry-run --json set NEW_KEY --payload secrets/dev.env   # plan as JSON, value redacted
 lockset export --payload secrets/prod/deploy.env --format dotenv
 lockset grant age1... --label dev-alice
@@ -211,7 +220,7 @@ highest first, flags, environment, this file, the defaults.
 sops_config = ".sops.yaml"               # the map --repo walks up to (with lockset.toml);
                                          # a non-default path is passed to sops as --config
 payload_globs = ["secrets/**/*"]         # which files are payloads
-default_payloads = ["secrets/dev.env"]   # what run and set use without --payload
+default_payloads = ["secrets/dev.env"]   # what run, set, edit, and unset use without --payload
 
 [[identities]]
 label = "admin"                          # the registry wins over .sops.yaml comments
@@ -239,7 +248,7 @@ Every field, its default, and what it does:
 | --- | --- | --- |
 | `repo.sops_config` | `.sops.yaml` | The map, repo-relative. A non-default path is passed to sops as `--config`; `--repo` walks up to this file or `lockset.toml`. |
 | `repo.payload_globs` | `["secrets/**/*"]` | Which files are payloads, matched against repository-relative paths. `*` and `?` stop at `/`; `**/` spans any number of directories. |
-| `repo.default_payloads` | `[]` | What `run` and `set` use without `--payload`. Empty means "ask": a command that needs one stops with exit 2 and lists what is available. |
+| `repo.default_payloads` | `[]` | What `run`, `set`, `edit`, and `unset` use without `--payload`. Empty means "ask": a command that needs one stops with exit 2 and lists what is available. |
 | `[[identities]]` | `[]` | Identity registry: `label`, `public`, optional `roles`. When present it wins over `.sops.yaml` comments; role `admin` marks the identity that must open every payload. |
 | `labels.admin` | `"admin"` | Legacy label used for admin coverage while no registry exists. |
 | `labels.person_prefix` | `"dev-"` | Prefix suggested for `person add` labels. |
@@ -250,9 +259,10 @@ Every field, its default, and what it does:
 | `codec.sops` | `sops` | The binary; `--sops` and `LOCKSET_SOPS` win over it. |
 | `codec.min_version` | `3.13.0` | The preflight floor for sops. |
 
-`run` and `set` never invent a payload: without `--payload` they use
-`repo.default_payloads`, and a repository that names none stops with exit 2 and
-lists the payloads it does have; `set` needs exactly one. A setting's precedence:
+`run`, `set`, `edit`, and `unset` never invent a payload: without `--payload`
+they use `repo.default_payloads`, and a repository that names none stops with
+exit 2 and lists the payloads it does have; `set`, `edit`, and `unset` need
+exactly one. A setting's precedence:
 
 | Setting | Flag | Environment | File |
 | --- | --- | --- | --- |
@@ -312,11 +322,19 @@ lockset run --custody file:/run/secrets/age-key --payload secrets/dev.env -- ./t
 ### Labels and the identity registry
 
 The `[[identities]]` entries are the source of truth for labels: `who` lists
-them, `grant` requires the identity to be registered, and `revoke --label`
-resolves through them. Trailing `# label,...` comments in the sops config are a
-**migration input only** once a registry exists: a comment label that conflicts
-with the registry (or names a key the registry does not know) is reported as
-drift, never silently repaired.
+them and `revoke --label` resolves through them. `grant` and `person add` keep
+the registry current: a key it does not know is appended as an `[[identities]]`
+entry (label and public key, no roles) in the same plan as the `.sops.yaml`
+recipient and the payload re-wrap, and `revoke` and `person remove` delete the
+entry together with the recipient. A key that is already registered must keep
+its label, and a label already registered to another key is refused; register a
+role by editing the entry.
+
+Trailing `# label,...` comments in the sops config are a **migration input
+only** once a registry exists: a comment label that conflicts with the registry
+(or names a key the registry does not know) is reported as drift, never
+silently repaired. A new recipient needs no comment then; the registry carries
+its label.
 
 Convert a comment-labelled repository once:
 
@@ -337,10 +355,15 @@ fallback for repositories that have not migrated.
 `sops` rules keyed by another backend (`pgp`, `kms`, `gcp_kms`, `azure_kv`,
 `hc_vault_transit_uri`) parse and do not fail the file. `status` lists their
 payloads, and `check` reports each such rule on its own line with the backend
-and what still works: `rotate` and `set` do, because they need no age
+and what still works: `rotate`, `set`, and `unset` do, because they need no age
 recipients. `grant` and `revoke` refuse only a rule they would have to rewrite —
 the message names the rule and the backend and points at `--only` — so the rest
 of a mixed map stays manageable.
+
+A creation rule with no recipient line at all (`- path_regex:` and nothing
+else) is not a backend: it has no identity to grant to, so a default `grant`
+leaves its line byte-identical and does not let it block the age rules. An
+explicit `--only` that targets it still refuses, and `revoke` leaves it alone.
 
 ```sh
 lockset --config ./ci/lockset.toml doctor
@@ -776,6 +799,11 @@ reporting process.
 - The private key reaches sops as `SOPS_AGE_KEY`, and the sops child starts
   without the parent's identity or any other `SOPS_*` variable, so no inherited
   override can redirect it. The key never reaches argv or a file.
+- `lockset edit` hands the plaintext to `$SOPS_EDITOR` (default `vim -n`) and
+  lets sops own the temp file, which it creates with mode 0600. Lockset never
+  writes the plaintext itself; a failed editor, a payload that comes back
+  unencrypted or with another recipient set, and any plaintext value are
+  refused with exit 4 while the payload stays byte-identical.
 - `--custody file:<path>` keeps the identity outside the repository and
   private: the path is resolved through symlinks before that check, symlinks
   and non-regular files are refused, and a key file must be 0600 or stricter.

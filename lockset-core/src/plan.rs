@@ -57,6 +57,16 @@ pub enum Change {
         name: String,
         value: SecretValue,
     },
+    /// One value removed, then the payload re-encrypted with its recipients
+    /// unchanged. The value itself never enters the plan.
+    UnsetValue {
+        payload: PathId,
+        name: String,
+    },
+    /// Open the payload in `$SOPS_EDITOR` and re-encrypt it in place.
+    EditPayload {
+        payload: PathId,
+    },
     StoreKey {
         custody: CustodyKind,
     },
@@ -73,6 +83,8 @@ impl Change {
             Change::UpdateKeys { payload } => Some(payload),
             Change::RotateDataKey { payload } => Some(payload),
             Change::SetValue { payload, .. } => Some(payload),
+            Change::UnsetValue { payload, .. } => Some(payload),
+            Change::EditPayload { payload } => Some(payload),
             Change::StoreKey { .. } | Change::ForgetKey { .. } => None,
         }
     }

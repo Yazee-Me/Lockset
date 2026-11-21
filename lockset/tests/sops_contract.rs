@@ -41,7 +41,17 @@ impl Recorder {
                 "creation_rules:\n  - path_regex: secrets/.*\\.env$\n    age: {ADMIN},{READER} # admin,dev-reader\n"
             ),
         );
-        repo.write("secrets/dev.env", "TOKEN=ENC[a,type:str]\n");
+        repo.write(
+            "secrets/dev.env",
+            &format!(
+                "TOKEN=ENC[a,type:str]\n\
+                 sops_age__list_0__map_enc=-----BEGIN AGE ENCRYPTED FILE-----\\nYWdl\n\
+                 sops_age__list_0__map_recipient={ADMIN}\n\
+                 sops_lastmodified=2026-11-21T00:00:00Z\n\
+                 sops_mac=ENC[a,type:str]\n\
+                 sops_version=3.13.3\n"
+            ),
+        );
         let log = repo.path().join("sops.log");
         let plain = repo.path().join("plain.env");
         std::fs::write(&plain, "TOKEN=s3cret\n").unwrap();
@@ -69,6 +79,15 @@ impl Recorder {
                 "      value=${value#\\\"}\n",
                 "      value=${value%\\\"}\n",
                 "      printf '%s=%s\\n' \"$name\" \"$value\" > \"$RECORDER_PLAIN\"\n",
+                "      exit 0 ;;\n",
+                "    edit) exit 0 ;;\n",
+                "    unset)\n",
+                "      name=$(printf '%s' \"$4\" | tr -d '[]\"')\n",
+                "      path=\"$3\"\n",
+                "      grep -v \"^${name}=\" \"$path\" > \"$path.tmp\"\n",
+                "      mv \"$path.tmp\" \"$path\"\n",
+                "      grep -v \"^${name}=\" \"$RECORDER_PLAIN\" > \"$RECORDER_PLAIN.tmp\"\n",
+                "      mv \"$RECORDER_PLAIN.tmp\" \"$RECORDER_PLAIN\"\n",
                 "      exit 0 ;;\n",
                 "  esac\n",
                 "done\n",
@@ -101,6 +120,7 @@ impl Recorder {
             .env("SOPS_AGE_KEY_FILE", "/parent/key.txt")
             .env("SOPS_AGE_KEY_CMD", "parent-command")
             .env("SOPS_AGE_RECIPIENTS", "age1parentrecipient")
+            .env_remove("SOPS_EDITOR")
             .output()
             .unwrap()
     }
@@ -132,7 +152,7 @@ fn stderr(output: &Output) -> String {
 #[test]
 fn the_identity_never_reaches_sops_argv_or_an_inherited_variable() {
     let recorder = Recorder::new("contract");
-    let operations: [&[&str]; 5] = [
+    let operations: [&[&str]; 7] = [
         &["status"],
         &["export", "--payload", "secrets/dev.env"],
         &[
@@ -150,6 +170,8 @@ fn the_identity_never_reaches_sops_argv_or_an_inherited_variable() {
             "dev-new",
         ],
         &["rotate", "--all"],
+        &["edit", "--payload", "secrets/dev.env"],
+        &["unset", "TOKEN", "--payload", "secrets/dev.env"],
     ];
 
     for args in operations {
@@ -227,5 +249,32 @@ fn the_identity_never_reaches_sops_argv_or_an_inherited_variable() {
     assert!(
         argv_lines.contains(&"rotate -i secrets/dev.env".to_owned()),
         "rotate argv missing: {argv_lines:?}"
+    );
+    assert!(
+        argv_lines.contains(&"edit secrets/dev.env".to_owned()),
+        "edit argv missing: {argv_lines:?}"
+    );
+    assert!(
+        argv_lines.contains(&r#"unset --idempotent secrets/dev.env ["TOKEN"]"#.to_owned()),
+        "unset argv missing: {argv_lines:?}"
+    );
+
+    // `edit` is the one child that starts the user's editor, so it carries
+    // exactly the editor `SOPS_EDITOR` names (defaulted here).
+    let (_, edit_env) = invocations
+        .iter()
+        .find(|(argv, _)| argv.join(" ") == "edit secrets/dev.env")
+        .expect("the fake sops never ran edit");
+    assert_eq!(
+        edit_env
+            .iter()
+            .filter(|line| line.starts_with("SOPS_EDITOR="))
+            .count(),
+        1,
+        "exactly one editor: {edit_env:?}"
+    );
+    assert!(
+        edit_env.iter().any(|line| line == "SOPS_EDITOR=vim -n"),
+        "the default editor is missing: {edit_env:?}"
     );
 }

@@ -200,40 +200,60 @@ pub struct GrantRequest {
     pub only: Option<Vec<PathId>>,
 }
 
-/// The label a grant may write into the `.sops.yaml` comment. With a registry,
-/// the grant must match a registered identity and no comment is written; the
-/// comment path remains for repositories in the middle of migrating.
-fn grant_comment_label(snapshot: &Snapshot, request: &GrantRequest) -> Result<Option<Label>> {
+/// What a grant writes besides the map: the label for the `.sops.yaml` comment
+/// (repositories without a registry) and a registry entry to append. With a
+/// registry, the comment is migration-only: an unregistered key is registered
+/// with `roles = []`, and a registered one must already carry the label.
+struct GrantNotices {
+    comment: Option<Label>,
+    register: Option<crate::config::Identity>,
+}
+
+fn grant_notices(snapshot: &Snapshot, request: &GrantRequest) -> Result<GrantNotices> {
     if snapshot.registry.is_empty() {
-        return Ok(Some(request.label.clone()));
+        return Ok(GrantNotices {
+            comment: Some(request.label.clone()),
+            register: None,
+        });
     }
-    match snapshot.registry.label_for(&request.key) {
-        Some(label) if label == &request.label => Ok(None),
-        Some(label) => Err(Error::refused(format!(
+    if let Some(label) = snapshot.registry.label_for(&request.key) {
+        if label == &request.label {
+            return Ok(GrantNotices {
+                comment: None,
+                register: None,
+            });
+        }
+        return Err(Error::refused(format!(
             "{} is registered as {label} in lockset.toml, not {}; fix the entry or pass --label {label}",
             request.key, request.label
-        ))),
-        None => {
-            if let Some(other) = snapshot.registry.keys_for_label(&request.label).first() {
-                return Err(Error::refused(format!(
-                    "label {} is registered to {other} in lockset.toml; fix the entry or pass the right label",
-                    request.label
-                )));
-            }
-            Err(Error::refused(format!(
-                "{} is not in lockset.toml; add an [[identities]] entry with label = \"{}\" and this \
-                 public key (or start from the comments with `lockset who --toml`)",
-                request.key, request.label
-            )))
-        }
+        )));
     }
+    if let Some(other) = snapshot.registry.keys_for_label(&request.label).first() {
+        return Err(Error::refused(format!(
+            "label {} is registered to {other} in lockset.toml; fix the entry or pass the right label",
+            request.label
+        )));
+    }
+    Ok(GrantNotices {
+        comment: None,
+        register: Some(crate::config::Identity {
+            label: request.label.clone(),
+            public: request.key.clone(),
+            roles: Vec::new(),
+        }),
+    })
 }
 
 /// Plan: add a recipient to the targeted rules, then re-wrap those payloads.
 pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan::Plan> {
     let rules = snapshot.sops.rules();
     let targets: Vec<usize> = match &request.only {
-        None => (0..rules.len()).collect(),
+        // A rule with no recipients has no identity to grant to: it stays
+        // byte-identical instead of blocking the age rules. `Other` backends
+        // still refuse below, and an explicit `--only` still names them.
+        None => (0..rules.len())
+            .filter(|index| rules[*index].kind != crate::sopsfile::RuleKind::None)
+            .collect(),
         Some(ids) => {
             let mut out = Vec::new();
             for id in ids {
@@ -250,7 +270,7 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
     };
 
     refuse_without_age_rule(snapshot, &targets)?;
-    let comment_label = grant_comment_label(snapshot, request)?;
+    let notices = grant_notices(snapshot, request)?;
 
     let mut sets: Vec<Vec<crate::sopsfile::Recipient>> =
         rules.iter().map(|r| r.recipients.clone()).collect();
@@ -259,7 +279,7 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
         if !sets[*index].iter().any(|r| r.key == request.key) {
             sets[*index].push(crate::sopsfile::Recipient {
                 key: request.key.clone(),
-                label: comment_label.clone(),
+                label: notices.comment.clone(),
             });
             added.push(*index);
         }
@@ -267,6 +287,14 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
 
     let mut plan = crate::plan::Plan::default();
     if added.is_empty() {
+        if targets.is_empty() {
+            plan.note(format!(
+                "no rule declares recipients, so there is nowhere to grant {}; \
+                 add it to .sops.yaml with sops",
+                request.key
+            ));
+            return Ok(plan);
+        }
         plan.note(format!(
             "{} is already a recipient of the targeted payloads",
             request.key
@@ -274,24 +302,45 @@ pub fn grant(snapshot: &Snapshot, request: &GrantRequest) -> Result<crate::plan:
         return Ok(plan);
     }
 
+    // The registry entry lands in the same transactional plan as the map and
+    // the re-wrap, so a failure restores all three.
+    let registry_write = match notices.register {
+        Some(identity) => {
+            let (path, text) = snapshot.config_document()?;
+            let contents = crate::config::append_identity(text, &identity)?;
+            Some((path.clone(), contents))
+        }
+        None => None,
+    };
+
     let text = snapshot.sops.render_with(&sets)?;
     plan.push(crate::plan::Change::WriteFile {
         path: snapshot.sops_path.clone(),
         contents: text,
     });
+    if let Some((path, contents)) = registry_write {
+        plan.push(crate::plan::Change::WriteFile {
+            path: path.clone(),
+            contents,
+        });
+        plan.note(format!(
+            "registered {} as {} in {path}",
+            request.key, request.label
+        ));
+    }
+    let mut payloads = 0usize;
     for payload in &snapshot.payloads {
         let matched = snapshot.sops.rule_indexes_for(payload.id.as_str())?;
         if matched.iter().any(|i| targets.contains(i)) {
             plan.push(crate::plan::Change::UpdateKeys {
                 payload: payload.id.clone(),
             });
+            payloads += 1;
         }
     }
     plan.note(format!(
-        "grant {} as {} on {} payload(s)",
-        request.key,
-        request.label,
-        plan.changes.len().saturating_sub(1)
+        "grant {} as {} on {payloads} payload(s)",
+        request.key, request.label
     ));
 
     let same_label: Vec<&PubKey> = rules
@@ -441,6 +490,18 @@ pub fn revoke(snapshot: &Snapshot, request: &RevokeRequest) -> Result<crate::pla
         path: snapshot.sops_path.clone(),
         contents: text,
     });
+
+    // The registry entry goes with the map and the re-wrap, so `revoke` and
+    // `person remove` leave no stale identity behind.
+    if snapshot.registry.label_for(&key).is_some() {
+        let (path, text) = snapshot.config_document()?;
+        let contents = crate::config::remove_identity(text, &key)?;
+        plan.push(crate::plan::Change::WriteFile {
+            path: path.clone(),
+            contents,
+        });
+        plan.note(format!("removed {} from {path}", key));
+    }
 
     let mut touched = Vec::new();
     for payload in &snapshot.payloads {
@@ -636,6 +697,17 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+        fn edit(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
+        fn unset_value(
+            &self,
+            _id: &PathId,
+            _name: &str,
+            _key: &crate::model::SecretKey,
+        ) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -699,6 +771,17 @@ mod tests {
             _id: &PathId,
             _name: &str,
             _value: &str,
+            _key: &crate::model::SecretKey,
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn edit(&self, _id: &PathId, _key: &crate::model::SecretKey) -> Result<()> {
+            Ok(())
+        }
+        fn unset_value(
+            &self,
+            _id: &PathId,
+            _name: &str,
             _key: &crate::model::SecretKey,
         ) -> Result<()> {
             Ok(())
@@ -1009,9 +1092,29 @@ mod tests {
         crate::config::IdentityRegistry::new(identities)
     }
 
-    /// The main fixture, with `A` as admin/recovery and `B` as recovery.
+    /// The main fixture, with a registry parsed from the config text the plan
+    /// would rewrite. Roles are spelled out here because `append_identity`
+    /// deliberately writes none.
     fn registry_snapshot(identities: Vec<crate::config::Identity>) -> Snapshot {
-        snapshot(Some(A)).with_registry(registry(identities))
+        let mut text = String::from("[codec]\nsops = \"sops\"\n");
+        for identity in &identities {
+            text.push_str(&format!(
+                "\n[[identities]]\nlabel = \"{}\"\npublic = \"{}\"\n",
+                identity.label, identity.public
+            ));
+            if !identity.roles.is_empty() {
+                let roles: Vec<String> = identity
+                    .roles
+                    .iter()
+                    .map(|role| format!("\"{role}\""))
+                    .collect();
+                text.push_str(&format!("roles = [{}]\n", roles.join(", ")));
+            }
+        }
+        let config = crate::config::Config::parse(&text).unwrap();
+        snapshot(Some(A))
+            .with_registry(config.registry.clone())
+            .with_config_document(PathId::parse("lockset.toml").unwrap(), text)
     }
 
     #[test]
@@ -1116,8 +1219,62 @@ mod tests {
     }
 
     #[test]
-    fn grant_refuses_an_unregistered_identity() {
+    fn grant_registers_an_unregistered_identity() {
         let snap = registry_snapshot(vec![identity("admin", A, &["admin"])]);
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-carol").unwrap(),
+            only: None,
+        };
+
+        let plan = grant(&snap, &request).unwrap();
+
+        let writes: Vec<(&PathId, &String)> = plan
+            .changes
+            .iter()
+            .filter_map(|change| match change {
+                crate::plan::Change::WriteFile { path, contents } => Some((path, contents)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(writes.len(), 2, "{writes:?}");
+        let (_, map) = writes
+            .iter()
+            .find(|(path, _)| path.as_str() == ".sops.yaml")
+            .expect("a map write");
+        assert!(map.contains(C), "{map}");
+        assert!(
+            !map.contains("dev-carol"),
+            "no comment for a registry: {map}"
+        );
+        let (config_path, config) = writes
+            .iter()
+            .find(|(path, _)| path.as_str() == "lockset.toml")
+            .expect("a registry write");
+        assert_eq!(config_path.as_str(), "lockset.toml");
+
+        let parsed = crate::config::Config::parse(config).unwrap();
+        assert_eq!(
+            parsed
+                .registry
+                .label_for(&PubKey::parse(C).unwrap())
+                .map(Label::as_str),
+            Some("dev-carol")
+        );
+        assert!(parsed
+            .registry
+            .identities()
+            .iter()
+            .any(|i| i.public.as_str() == A && i.has_role("admin")));
+        assert!(plan.notes.iter().any(|note| note.contains("lockset.toml")));
+    }
+
+    #[test]
+    fn a_registry_edit_without_an_editable_config_is_refused() {
+        // A config outside the repository has no repo-relative path, so the
+        // snapshot carries no document even though the registry is non-empty.
+        let snap =
+            snapshot(Some(A)).with_registry(registry(vec![identity("admin", A, &["admin"])]));
         let request = GrantRequest {
             key: PubKey::parse(C).unwrap(),
             label: Label::parse("dev-carol").unwrap(),
@@ -1128,10 +1285,26 @@ mod tests {
 
         assert!(matches!(error, Error::Refused(_)), "{error:?}");
         assert!(
-            error.to_string().contains("is not in lockset.toml"),
+            error.to_string().contains("no editable config document"),
             "{error}"
         );
-        assert!(error.to_string().contains("who --toml"), "{error}");
+    }
+
+    #[test]
+    fn grant_registers_nothing_when_it_is_already_a_recipient() {
+        // C is already a recipient of the targeted rule but not in the
+        // registry: a no-op grant must not register it.
+        let snap = registry_snapshot(vec![identity("admin", A, &["admin"])]);
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-carol").unwrap(),
+            only: Some(vec![PathId::parse("secrets/prod/infra.env").unwrap()]),
+        };
+
+        let plan = grant(&snap, &request).unwrap();
+
+        assert!(plan.is_empty(), "{:?}", plan.changes);
+        assert!(plan.notes[0].contains("already a recipient"));
     }
 
     #[test]
@@ -1176,6 +1349,80 @@ mod tests {
     }
 
     #[test]
+    fn revoke_removes_the_registry_entry_and_keeps_the_others() {
+        let snap = registry_snapshot(vec![
+            identity("admin", A, &["admin"]),
+            identity("dev-alice", B, &["ci"]),
+            identity("dev-carol", C, &[]),
+        ]);
+        let request = RevokeRequest {
+            target: RevokeTarget::Label(Label::parse("dev-alice").unwrap()),
+            keep_data_key: true,
+            force: false,
+        };
+
+        let plan = revoke(&snap, &request).unwrap();
+
+        let mut map = None;
+        let mut config = None;
+        for change in &plan.changes {
+            if let crate::plan::Change::WriteFile { path, contents } = change {
+                match path.as_str() {
+                    ".sops.yaml" => map = Some(contents),
+                    "lockset.toml" => config = Some(contents),
+                    _ => {}
+                }
+            }
+        }
+        let map = map.expect("a map write");
+        let config = config.expect("a registry write");
+
+        assert!(!map.contains(B), "{map}");
+        assert!(!config.contains(B), "{config}");
+        let parsed = crate::config::Config::parse(config).unwrap();
+        assert_eq!(parsed.registry.identities().len(), 2);
+        assert_eq!(
+            parsed
+                .registry
+                .label_for(&PubKey::parse(A).unwrap())
+                .map(Label::as_str),
+            Some("admin")
+        );
+        assert!(parsed.registry.identities()[0].has_role("admin"));
+        assert_eq!(
+            parsed
+                .registry
+                .label_for(&PubKey::parse(C).unwrap())
+                .map(Label::as_str),
+            Some("dev-carol")
+        );
+        assert!(plan
+            .notes
+            .iter()
+            .any(|note| note.contains("removed") && note.contains("lockset.toml")));
+    }
+
+    #[test]
+    fn with_a_registry_an_unlabelled_recipient_is_not_drift() {
+        let legacy = SopsFile::parse(&format!(
+            "creation_rules:\n- path_regex: secrets/prod/infra\\.env$\n  age: {A},{B}\n"
+        ))
+        .unwrap();
+        let snap = Snapshot::new(
+            ".",
+            legacy,
+            vec![payload("secrets/prod/infra.env", &[A, B])],
+            None,
+        )
+        .with_registry(registry(vec![
+            identity("admin", A, &["admin"]),
+            identity("dev-alice", B, &[]),
+        ]));
+
+        assert!(snap.drift().is_empty(), "{:?}", snap.drift());
+    }
+
+    #[test]
     fn non_age_rules_are_reported_per_rule() {
         let checks = checks(&mixed_snapshot());
 
@@ -1203,6 +1450,67 @@ mod tests {
         assert!(error.to_string().contains("secrets/kms/.*"), "{error}");
         assert!(error.to_string().contains("(kms)"), "{error}");
         assert!(error.to_string().contains("--only"), "{error}");
+    }
+
+    /// An age rule followed by a bare `path_regex` rule, as a repository that
+    /// labels every payload in one rule and leaves the rest unmanaged has.
+    fn empty_rule_snapshot() -> Snapshot {
+        let sops = SopsFile::parse(&format!(
+            "creation_rules:\n- path_regex: secrets/age/.*\\.env$\n  age: {A},{B} # admin,recovery\n- path_regex: secrets/bare/.*\\.env$\n"
+        ))
+        .unwrap();
+        let payloads = vec![
+            payload("secrets/age/dev.env", &[A, B]),
+            payload("secrets/bare/dev.env", &[]),
+        ];
+        Snapshot::new(".", sops, payloads, None)
+    }
+
+    #[test]
+    fn grant_skips_a_rule_with_no_recipients() {
+        let request = GrantRequest {
+            key: PubKey::parse(C).unwrap(),
+            label: Label::parse("dev-new").unwrap(),
+            only: None,
+        };
+
+        let plan = grant(&empty_rule_snapshot(), &request).unwrap();
+
+        let contents = plan
+            .changes
+            .iter()
+            .find_map(|change| match change {
+                crate::plan::Change::WriteFile { contents, .. } => Some(contents),
+                _ => None,
+            })
+            .expect("a map write");
+        assert!(contents.contains(C), "{contents}");
+        assert!(
+            contents.ends_with("- path_regex: secrets/bare/.*\\.env$\n"),
+            "the empty rule must stay byte-identical: {contents}"
+        );
+        assert!(
+            !contents.contains("bare/.*\\.env$\n  age:"),
+            "no age line is added to an empty rule: {contents}"
+        );
+        // The payload matched only by the empty rule is not re-wrapped.
+        assert!(
+            !plan
+                .changes
+                .iter()
+                .any(|change| matches!(change, crate::plan::Change::UpdateKeys { payload } if payload.as_str() == "secrets/bare/dev.env")),
+            "{:?}",
+            plan.changes
+        );
+
+        // An explicit `--only` on the empty rule still refuses.
+        let explicit = GrantRequest {
+            only: Some(vec![PathId::parse("secrets/bare/dev.env").unwrap()]),
+            ..request
+        };
+        let error = grant(&empty_rule_snapshot(), &explicit).unwrap_err();
+        assert!(matches!(error, Error::Refused(_)), "{error:?}");
+        assert!(error.to_string().contains("no age recipients"), "{error}");
     }
 
     #[test]

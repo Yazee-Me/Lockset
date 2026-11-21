@@ -127,6 +127,14 @@ fn run(
             codec.set_value(payload, name, value.expose(), key)?;
             format!("set {name} in {payload}")
         }
+        Change::UnsetValue { payload, name } => {
+            codec.unset_value(payload, name, key)?;
+            format!("removed {name} from {payload}")
+        }
+        Change::EditPayload { payload } => {
+            codec.edit(payload, key)?;
+            format!("edited {payload}")
+        }
         Change::StoreKey { custody: kind } => {
             custody.set(key)?;
             format!("stored the key in {kind}")
@@ -333,6 +341,14 @@ mod tests {
         fn set_value(&self, id: &PathId, name: &str, _value: &str, _key: &SecretKey) -> Result<()> {
             self.call("set", id, name)
         }
+
+        fn unset_value(&self, id: &PathId, name: &str, _key: &SecretKey) -> Result<()> {
+            self.call("unset", id, name)
+        }
+
+        fn edit(&self, id: &PathId, _key: &SecretKey) -> Result<()> {
+            self.call("edit", id, "edited")
+        }
     }
 
     #[derive(Default)]
@@ -438,6 +454,25 @@ mod tests {
         assert_eq!(repo.text("secrets/a.env"), "rekeyed");
         assert_eq!(repo.text("secrets/b.env"), "K");
         assert_eq!(repo.writes.borrow().as_slice(), [".sops.yaml"]);
+    }
+
+    #[test]
+    fn an_unset_reports_the_key_and_its_payload() {
+        let repo = repo();
+        let codec = MemoryCodec::new(&repo);
+        let custody = MemoryCustody::default();
+        let key = SecretKey::generate();
+        let mut plan = Plan::default();
+        plan.push(Change::UnsetValue {
+            payload: PathId::parse("secrets/b.env").unwrap(),
+            name: "K".to_owned(),
+        });
+        seal(&mut plan, &repo);
+
+        let log = apply(&plan, &repo, &codec, &custody, &key).unwrap();
+
+        assert_eq!(log, ["removed K from secrets/b.env"]);
+        assert_eq!(repo.text("secrets/b.env"), "K");
     }
 
     #[test]

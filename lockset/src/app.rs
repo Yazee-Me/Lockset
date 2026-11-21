@@ -298,7 +298,18 @@ fn dispatch(cli: &Cli, context: &wiring::Context, inputs: &Inputs, ui: &mut Ui) 
                 if_absent: *if_absent,
             },
         ),
+        Command::Unset {
+            first,
+            second,
+            payload,
+        } => {
+            let (payload, key) = unset_target(first, second.as_deref(), payload.as_deref())?;
+            unset(context, cli, ui, key, payload)
+        }
         Command::Rotate { all, payload } => rotate(context, cli, ui, *all, payload),
+        Command::Edit { path, payload } => {
+            edit(context, cli, ui, path.as_deref(), payload.as_deref())
+        }
         Command::Person { command } => person(context, cli, ui, command),
         Command::Export {
             payload,
@@ -365,7 +376,7 @@ fn one_default_payload(context: &wiring::Context) -> Result<PathId> {
         [one] => Ok(one.clone()),
         [] => Err(no_default_payload(context)),
         many => Err(usage::error(format!(
-            "set writes one payload, but repo.default_payloads lists {} ({}); pass --payload <PATH>",
+            "exactly one payload can be selected, but repo.default_payloads lists {} ({}); pass --payload <PATH>",
             many.len(),
             many.iter()
                 .map(|id| id.as_str())
@@ -1035,6 +1046,118 @@ fn key_is_set(context: &wiring::Context, id: &PathId, name: &str) -> Result<bool
     Ok(lockset_core::dotenv::parse(&text)
         .iter()
         .any(|(key, value)| key == name && !value.is_empty()))
+}
+
+/// The accepted shapes of `unset`, normalized to (payload, key):
+/// `unset KEY --payload PATH`, `unset PATH KEY`, and `unset KEY` (the
+/// configured default payload). Clap already refuses `--payload` beside two
+/// positionals; the check here keeps a directly built `Command` honest.
+fn unset_target<'a>(
+    first: &'a str,
+    second: Option<&'a str>,
+    payload: Option<&'a str>,
+) -> Result<(Option<&'a str>, &'a str)> {
+    match (payload, second) {
+        (Some(path), None) => Ok((Some(path), first)),
+        (Some(_), Some(_)) => Err(usage::error(
+            "unset takes one key with --payload; drop the extra positional",
+        )),
+        (None, Some(key)) => Ok((Some(first), key)),
+        (None, None) => Ok((None, first)),
+    }
+}
+
+/// Remove one key from the selected payload. A key the payload does not set is
+/// a no-op success: it is reported and sops is never spawned, so the payload
+/// cannot change for nothing.
+fn unset(
+    context: &wiring::Context,
+    cli: &Cli,
+    ui: &mut Ui,
+    name: &str,
+    payload: Option<&str>,
+) -> Result<u8> {
+    if !lockset_core::meta::is_name(name) {
+        return Err(usage::error(format!("invalid key name: {name}")));
+    }
+    let id = match payload {
+        Some(path) => payload_id(path)?,
+        None => one_default_payload(context)?,
+    };
+    let snapshot = wiring::snapshot(context)?;
+    if snapshot.payload(&id).is_none() {
+        if let Some(error) = snapshot.payload_error(&id) {
+            return Err(usage::error(format!(
+                "cannot use {}: {}",
+                error.id, error.error
+            )));
+        }
+        return Err(usage::error(format!("no such payload: {id}")));
+    }
+
+    let mut plan = Plan::default();
+    plan.push(Change::UnsetValue {
+        payload: id.clone(),
+        name: name.to_owned(),
+    });
+    plan.expect(&snapshot.digests);
+    if cli.dry_run {
+        emit_plan(&plan, cli, ui)?;
+        return Ok(0);
+    }
+
+    let key = context.require_key()?;
+    let plain = context.codec.decrypt(&id, &key)?;
+    let text = String::from_utf8_lossy(&plain);
+    if !lockset_core::dotenv::parse(&text)
+        .iter()
+        .any(|(key, _)| key == name)
+    {
+        note!(ui, "{name} is not set in {id}; nothing to do");
+        return Ok(0);
+    }
+
+    context.codec.preflight()?;
+    for line in exec::apply(
+        &plan,
+        &context.repo,
+        &context.codec,
+        context.custody.as_ref(),
+        &key,
+    )? {
+        sayln!(ui, "{line}");
+    }
+    Ok(0)
+}
+
+/// Decrypt the payload into `$SOPS_EDITOR` and re-encrypt the result. The
+/// editor owns the plaintext; lockset never writes it into the repository.
+fn edit(
+    context: &wiring::Context,
+    cli: &Cli,
+    ui: &mut Ui,
+    path: Option<&str>,
+    payload: Option<&str>,
+) -> Result<u8> {
+    let id = match path.or(payload) {
+        Some(value) => payload_id(value)?,
+        None => one_default_payload(context)?,
+    };
+    lockset_core::meta::require_dotenv(&id)?;
+    let snapshot = wiring::snapshot(context)?;
+    if snapshot.payload(&id).is_none() {
+        if let Some(error) = snapshot.payload_error(&id) {
+            return Err(usage::error(format!(
+                "cannot use {}: {}",
+                error.id, error.error
+            )));
+        }
+        return Err(usage::error(format!("no such payload: {id}")));
+    }
+    let mut plan = Plan::default();
+    plan.push(Change::EditPayload { payload: id });
+    plan.expect(&snapshot.digests);
+    finish(context, cli, plan, ui)
 }
 
 fn rotate(

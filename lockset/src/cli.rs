@@ -131,6 +131,34 @@ pub enum Command {
         #[arg(long = "if-absent")]
         if_absent: bool,
     },
+    /// Remove one key from a payload and re-encrypt it
+    ///
+    /// Forms: `lockset unset KEY --payload PATH`, `lockset unset PATH KEY`, or
+    /// `lockset unset KEY` with the single repo.default_payloads entry. A key
+    /// the payload does not set is a no-op success.
+    #[command(
+        override_usage = "lockset unset <KEY> --payload <PATH>\n       lockset unset <PATH> <KEY>\n       lockset unset <KEY>"
+    )]
+    Unset {
+        /// Key to remove; in the payload-first form, the payload path
+        #[arg(value_name = "PATH|KEY")]
+        first: String,
+        /// Key to remove, in the payload-first form
+        #[arg(value_name = "KEY")]
+        second: Option<String>,
+        /// Payload to write; default repo.default_payloads (exactly one) from lockset.toml
+        #[arg(long = "payload", value_name = "PATH", conflicts_with = "second")]
+        payload: Option<String>,
+    },
+    /// Edit a payload through $SOPS_EDITOR, then re-encrypt it
+    Edit {
+        /// Payload to edit (default: the single repo.default_payloads entry)
+        #[arg(value_name = "PATH", conflicts_with = "payload")]
+        path: Option<String>,
+        /// Payload to edit; same as the positional form
+        #[arg(long = "payload", value_name = "PATH")]
+        payload: Option<String>,
+    },
     /// Rotate the data key (and re-encrypt every value) of the selected payloads
     Rotate {
         /// Rotate every payload

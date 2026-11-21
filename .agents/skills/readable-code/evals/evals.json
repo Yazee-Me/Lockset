@@ -1,0 +1,42 @@
+{
+  "skill_name": "readable-code",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "This function from our billing code works, but nobody can tell what it does. Rewrite it so it's easy to read, without changing its behavior:\n\n```python\ndef f(items, n):\n    out = []\n    for it in items:\n        if it['st'] == 'active' and it['qty'] > 0:\n            if it['qty'] < n:\n                out.append({'id': it['id'], 'amt': it['qty'] * it['pr']})\n            else:\n                out.append({'id': it['id'], 'amt': n * it['pr']})\n    return out\n```",
+      "expected_output": "The function is rewritten with descriptive names, a named cap constant, early returns or flattened logic, and no behavior change. Magic strings like 'active' are named or explained.",
+      "files": [],
+      "assertions": [
+        "Rewritten function has a descriptive name (not 'f')",
+        "Behavior preserved: identical output for a range of inputs, including dict keys in ('st','qty','pr','id') and out ('id','amt')",
+        "The status value 'active' is made self-explanatory in context",
+        "Logic is flattened (no deeply nested if-else)",
+        "Local variables are descriptively named (no cryptic temporaries)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Write a Python function called parse_duration that parses strings like '1h30m', '45m', '2h', and '90s' into a total number of seconds (int). It should raise a clear ValueError on malformed input. Make the code easy to read and understand.",
+      "expected_output": "A readable function with clear names, top-down structure, a helper for parsing a single component, clear error messages, and no unnecessary comments.",
+      "files": [],
+      "assertions": [
+        "Function is named parse_duration and returns int seconds",
+        "Returns correct seconds: '1h30m' -> 5400, '45m' -> 2700, '2h' -> 7200, '90s' -> 90",
+        "Raises ValueError on malformed input (e.g. 'abc', '1h30')",
+        "Readable structure: descriptive names, clear helper breakdown, no cryptic one-liners"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Review this code for readability and give me a list of the problems, each with a concrete suggested fix. Do NOT change the code, just report.\n\n```python\nclass Thing:\n    def __init__(self, a, b, c):\n        self.a = a\n        self.b = b\n        self.c = c\n\n    def proc(self):\n        t = 0\n        for i in range(len(self.a)):\n            x = self.a[i]\n            if x == 1:\n                t = t + self.b[i]\n            elif x == 2:\n                t = t + self.c[i]\n            else:\n                t = t - self.c[i] // 2\n        return t\n```",
+      "expected_output": "A list of readability problems (nondescript names, magic numbers, unclear branching, index-based loop) each with a concrete fix, and the code left unchanged.",
+      "files": [],
+      "assertions": [
+        "Report lists three or more distinct readability problems",
+        "Each problem names a concrete suggested fix",
+        "Report does not modify the original code (report-only respected)",
+        "Identifies the specific issues: nondescript names, magic numbers, index-based loop"
+      ]
+    }
+  ]
+}

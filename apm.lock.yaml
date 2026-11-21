@@ -5,9 +5,9 @@ dependencies:
   materialization_repo_url: Yazee-Me/Playbook
   name: playbook
   host: github.com
-  resolved_commit: 4f8d43c2a462a308600007292f4db73b484b8191
-  resolved_ref: v0.4.1
-  version: 0.4.1
+  resolved_commit: 829d146d8d27090fc8cb0514efeef9dce4dd7028
+  resolved_ref: v0.5.2
+  version: 0.5.2
   package_type: apm_package
   deployed_files:
   - .agents/skills/apm-context
@@ -218,6 +218,10 @@ dependencies:
   - .agents/skills/asd-ste100/scripts/ste_data.json
   - .agents/skills/confluence-pages
   - .agents/skills/confluence-pages/SKILL.md
+  - .agents/skills/design-review
+  - .agents/skills/design-review/SKILL.md
+  - .agents/skills/design-review/evals/evals.json
+  - .agents/skills/design-review/references/patterns.md
   - .agents/skills/domain-glossary
   - .agents/skills/domain-glossary/SKILL.md
   - .agents/skills/jira-tickets
@@ -229,6 +233,21 @@ dependencies:
   - .agents/skills/jira-tickets/references/subtask.md
   - .agents/skills/jira-tickets/references/task.md
   - .agents/skills/jira-tickets/references/workflow.md
+  - .agents/skills/lockset
+  - .agents/skills/lockset/SKILL.md
+  - .agents/skills/lockset/references/ci.md
+  - .agents/skills/lockset/references/configure.md
+  - .agents/skills/lockset/references/install.md
+  - .agents/skills/lockset/references/operations.md
+  - .agents/skills/readable-code
+  - .agents/skills/readable-code/SKILL.md
+  - .agents/skills/readable-code/evals/evals.json
+  - .agents/skills/test-scenarios
+  - .agents/skills/test-scenarios/SKILL.md
+  - .agents/skills/verify-output
+  - .agents/skills/verify-output/SKILL.md
+  - .agents/skills/verify-output/references/report-template.md
+  - .agents/skills/verify-output/scripts/check-report.mjs
   deployed_file_hashes:
     .agents/skills/apm-context/SKILL.md: sha256:67f1cf410e09e9d0da0d064bdaddf1ad251b4261322f04cf584a75479dea1e1d
     .agents/skills/archify/LICENSE: sha256:b799ab081703e7821ae5096d2c1abdf14bbdc75e8ea1c4045998c36ed6db9706
@@ -434,6 +453,9 @@ dependencies:
     .agents/skills/asd-ste100/scripts/ste_check.py: sha256:83ad858ce4077fb4e8f718713e70e2d6fc0addcb140ddd8a0645fcb19f31c4db
     .agents/skills/asd-ste100/scripts/ste_data.json: sha256:009292f33ce1361c5eef6376c8921efd65f6393204df67d57c413e085b451db5
     .agents/skills/confluence-pages/SKILL.md: sha256:c9032d3dcbd3dd8e7af258520cd4dc7f9564711e86ca0c056c7e54f71b87536c
+    .agents/skills/design-review/SKILL.md: sha256:ee55922796c2b1c67fc33b4160bd89eeb76152572e98b151dddbb8239e384585
+    .agents/skills/design-review/evals/evals.json: sha256:71384be40c5ac3a1ce636a739018a50d488d3e71c63fcd39fdd469d2dd674e4b
+    .agents/skills/design-review/references/patterns.md: sha256:8bf3b3c9051fcd454860e0bc86c4b8015955def0ec23d82d9ec29a85045518ce
     .agents/skills/domain-glossary/SKILL.md: sha256:c54b2bf726ea0c426b1e5877592d6ddbd161eda3aaa8b47b1896ca70e6f6d3bb
     .agents/skills/jira-tickets/SKILL.md: sha256:174480c5b3f82f7c683f51e20a64dc3015f8aa33afcd40d2a8243973d6ab8a10
     .agents/skills/jira-tickets/references/README.md: sha256:8ea7d68ff74263cdc407acac75aabc9ad1b39c6dd49ec4519e4223a95cc502b5
@@ -443,7 +465,18 @@ dependencies:
     .agents/skills/jira-tickets/references/subtask.md: sha256:b3a30f2b38422258bdeb4caa8228ee76f72b33154b5c01ae5d008b83b2883bb9
     .agents/skills/jira-tickets/references/task.md: sha256:19aab6ede0f8268e4da02fd430cdbf75bf4eed6dd3594ebfba76ecf5eb894a6e
     .agents/skills/jira-tickets/references/workflow.md: sha256:a47564eef488ba18198b151ac00e63015399f0ea025e27a4aec4ac142d45059b
-  content_hash: sha256:044aa6a012340b3bfaa9a4201f985a644315116c07228690e7b2929597b70922
+    .agents/skills/lockset/SKILL.md: sha256:b0ef64bd10a0ba03dfe8a41a3ee09cef882dd60ed9abd521440d0ba399c71be9
+    .agents/skills/lockset/references/ci.md: sha256:d8f3f005c38d19c7799f6e3796ca73a5cabf2ddb5e62b4a216b23ca04b5bec5e
+    .agents/skills/lockset/references/configure.md: sha256:91170913e5272caeed239f6414c8ae10e69b9b7b15ebe790079e156cbeef1cde
+    .agents/skills/lockset/references/install.md: sha256:b146039fb28efd7dcaf8bf1c7f1c2906ee26d76fb1152db096f73646cc9e08b5
+    .agents/skills/lockset/references/operations.md: sha256:740873aebc6c715da06483ae6eae588e68e3729933885c20161232eade177c8c
+    .agents/skills/readable-code/SKILL.md: sha256:255e234e7e7480ba002d3db71d8a6370a7040d1468da8102ca5019745cb3a259
+    .agents/skills/readable-code/evals/evals.json: sha256:7388572565d92b329a1a65f4ab3f0561c0f3c129f2294d6d1800c0ebfcf6593f
+    .agents/skills/test-scenarios/SKILL.md: sha256:f5d4b466a751b22387a0da085bf307881aae097acba4adb374ba9d1b5fc8fe37
+    .agents/skills/verify-output/SKILL.md: sha256:1cfe0b4293dcb3be7d24b54a2edff997257e6cd7558524221f383e9edbff6b88
+    .agents/skills/verify-output/references/report-template.md: sha256:f93bcf8a02db37aa818b2358edf6f9f2a08d772d3f21fb82dbd9323ea328597b
+    .agents/skills/verify-output/scripts/check-report.mjs: sha256:b789cfb2c8ccfd7d1a5164280e9e1c6ebe726b5ad05f27a47ae6fa1cbdfb7a72
+  content_hash: sha256:ce630b8c7721d691e3ae1fd5f2f66869482b64e2b73e680e417211a042a20f14
 deployments:
 - kind: project-relative
   target: opencode
@@ -2319,6 +2352,42 @@ deployments:
   content_hash: sha256:c9032d3dcbd3dd8e7af258520cd4dc7f9564711e86ca0c056c7e54f71b87536c
 - kind: project-relative
   target: opencode
+  value: .agents/skills/design-review
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: null
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/design-review/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:ee55922796c2b1c67fc33b4160bd89eeb76152572e98b151dddbb8239e384585
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/design-review/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:71384be40c5ac3a1ce636a739018a50d488d3e71c63fcd39fdd469d2dd674e4b
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/design-review/references/patterns.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:8bf3b3c9051fcd454860e0bc86c4b8015955def0ec23d82d9ec29a85045518ce
+- kind: project-relative
+  target: opencode
   value: .agents/skills/domain-glossary
   runtime: null
   scope: project
@@ -2416,3 +2485,138 @@ deployments:
   - yazee-me/playbook
   active_owner: yazee-me/playbook
   content_hash: sha256:a47564eef488ba18198b151ac00e63015399f0ea025e27a4aec4ac142d45059b
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/lockset
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: null
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/lockset/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:b0ef64bd10a0ba03dfe8a41a3ee09cef882dd60ed9abd521440d0ba399c71be9
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/lockset/references/ci.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:d8f3f005c38d19c7799f6e3796ca73a5cabf2ddb5e62b4a216b23ca04b5bec5e
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/lockset/references/configure.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:91170913e5272caeed239f6414c8ae10e69b9b7b15ebe790079e156cbeef1cde
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/lockset/references/install.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:b146039fb28efd7dcaf8bf1c7f1c2906ee26d76fb1152db096f73646cc9e08b5
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/lockset/references/operations.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:740873aebc6c715da06483ae6eae588e68e3729933885c20161232eade177c8c
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/readable-code
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: null
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/readable-code/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:255e234e7e7480ba002d3db71d8a6370a7040d1468da8102ca5019745cb3a259
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/readable-code/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:7388572565d92b329a1a65f4ab3f0561c0f3c129f2294d6d1800c0ebfcf6593f
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/test-scenarios
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: null
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/test-scenarios/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:f5d4b466a751b22387a0da085bf307881aae097acba4adb374ba9d1b5fc8fe37
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/verify-output
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: null
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/verify-output/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:1cfe0b4293dcb3be7d24b54a2edff997257e6cd7558524221f383e9edbff6b88
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/verify-output/references/report-template.md
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:f93bcf8a02db37aa818b2358edf6f9f2a08d772d3f21fb82dbd9323ea328597b
+- kind: project-relative
+  target: opencode
+  value: .agents/skills/verify-output/scripts/check-report.mjs
+  runtime: null
+  scope: project
+  owners:
+  - yazee-me/playbook
+  active_owner: yazee-me/playbook
+  content_hash: sha256:b789cfb2c8ccfd7d1a5164280e9e1c6ebe726b5ad05f27a47ae6fa1cbdfb7a72

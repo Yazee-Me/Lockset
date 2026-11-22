@@ -594,9 +594,10 @@ publishes a GitHub release.
 Every archive ships with `<archive>.sha256`, the release carries a combined
 `SHA256SUMS`, and each artifact has a GitHub Artifact Attestation (SLSA
 provenance) that `gh attestation verify <file> --repo Yazee-Me/Lockset` checks.
-The release body is the matching `CHANGELOG.md` section, so the breaking
-changes — today the identity and sops rename — are on the release page; CI
-fails if that section is missing them.
+The release body is the matching `CHANGELOG.md` section. The identity and sops
+rename is documented in the v0.1.0 release notes, and CI keeps that section
+intact: later releases are additive and do not repeat the breaking-change
+section.
 
 Install paths, all verified against the published checksums:
 
@@ -688,9 +689,10 @@ cargo release patch --execute    # or minor/major: bumps, tags v<version>, pushe
 
 That opens the next `CHANGELOG.md` section from `Unreleased` and tags
 `v<version>`, which starts the cargo-dist release, the container image, and the
-action's install. The `Unreleased` section is the contract for those notes: keep
-the breaking-change summary at its top (CI fails when a version's section lacks
-it).
+action's install. The `Unreleased` section is the release body: keep it
+accurate. The identity and sops rename guarantee is pinned to the v0.1.0 release
+notes, which CI keeps intact; a later version's notes are not required to carry
+a breaking-change section.
 
 ## Signing
 

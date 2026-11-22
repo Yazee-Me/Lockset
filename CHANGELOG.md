@@ -11,6 +11,11 @@
   cross-target builds run on `main`, the container image builds only when its
   definition or the dependency graph changes, and release verification no
   longer starts a macOS runner.
+- The release-notes check is pinned to the `0.1.0` section of `CHANGELOG.md`
+  instead of the current version's notes (LS-50). The image manifest waits up to
+  five minutes for the GitHub release before attaching `image-digest.txt`, and
+  warns instead of failing once the platform images are pushed, so a rerun
+  attaches the digest without rebuilding.
 
 ## 0.2.0 - 2026-11-21
 

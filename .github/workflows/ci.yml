@@ -160,19 +160,24 @@ jobs:
         run: cargo package --workspace --locked
       - name: cargo-binstall would fetch the published archives
         run: ./scripts/check-binstall.sh
-      - name: Release notes carry the breaking change
+      - name: The v0.1.0 release notes keep the rename
         shell: bash
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name=="lockset") | .version')
-          body=$(dist plan --tag="v$version" --output-format=json | jq -r '.announcement_github_body // ""')
-          # Read from a file: `grep -q` exits as soon as it matches, and a
-          # larger body can then make printf fail on the closed pipe.
-          printf '%s\n' "$body" > "$RUNNER_TEMP/release-body.md"
-          grep -q 'Breaking changes' "$RUNNER_TEMP/release-body.md" \
-            || { echo "release notes for v$version have no Breaking changes section" >&2; exit 1; }
-          grep -q 'Identity and sops lookup' "$RUNNER_TEMP/release-body.md" \
-            || { echo "release notes for v$version do not document the identity/sops rename" >&2; exit 1; }
+          # The breaking change belongs to v0.1.0. Later releases are additive
+          # and do not repeat the section, so only that section is checked.
+          # `dist plan --tag=v0.1.0` cannot be asked from this tree (the tag no
+          # longer matches the crate version), so read the section directly.
+          awk '
+            /^## / {
+              if (started) exit
+              if ($0 ~ /^## 0[.]1[.]0( |$)/) started = 1
+            }
+            started
+          ' CHANGELOG.md > "$RUNNER_TEMP/v0.1.0-notes.md"
+          grep -q '^### Breaking changes$' "$RUNNER_TEMP/v0.1.0-notes.md" \
+            || { echo "the v0.1.0 release notes have no Breaking changes section" >&2; exit 1; }
+          grep -q 'Identity and sops lookup' "$RUNNER_TEMP/v0.1.0-notes.md" \
+            || { echo "the v0.1.0 release notes do not document the identity/sops rename" >&2; exit 1; }
 
   msrv:
     name: MSRV (1.89)

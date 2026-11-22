@@ -8,6 +8,10 @@ on:
   push:
     tags: ["v*"]
   pull_request:
+    # The image definition and the dependency graph; a source change is already
+    # compiled by the workspace tests, and the Dockerfile copies the whole
+    # workspace. Building it on every code pull request cost ~98 free-equivalent
+    # minutes a month (LS-54).
     paths:
       - Dockerfile
       - .dockerignore
@@ -15,9 +19,6 @@ on:
       - .github/workflows/image.yml
       - Cargo.toml
       - Cargo.lock
-      - "lockset/**"
-      - "lockset-core/**"
-      - "lockset-tools/**"
   workflow_dispatch:
 
 permissions:

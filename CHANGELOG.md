@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Internal
+
+- CI spends its runner minutes on the pull-request gate (LS-54): Linux and
+  Windows tests, lint, advisories, end-to-end, MSRV, packaging, and the
+  no-keyring build still run on every pull request. The macOS test and
+  end-to-end suite moved to one weekly job, the fuzz sweep runs weekly, the
+  cross-target builds run on `main`, the container image builds only when its
+  definition or the dependency graph changes, and release verification no
+  longer starts a macOS runner.
+
 ## 0.2.0 - 2026-11-21
 
 ### Added

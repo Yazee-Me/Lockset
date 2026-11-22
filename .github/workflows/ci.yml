@@ -1,13 +1,32 @@
 name: CI
 
-# The gate: the workspace tests on every supported OS, plus lint/docs,
-# supply-chain policy, and an end-to-end run against the pinned sops and age.
-# Tool versions come from mise.toml, so CI and local development agree.
+# The pull-request gate: the workspace tests on Linux and Windows, lint/docs,
+# supply-chain policy, end-to-end on Linux, MSRV, packaging, and the build
+# without the keyring backend. The tool versions come from mise.toml, so CI and
+# local development agree.
+#
+# Runner minutes are part of the design (LS-54). Blacksmith bills a 2 vCPU
+# Linux minute at 1x, a 4 vCPU at 2x, Windows at 2x, and 6 vCPU macOS at 20x,
+# and a job rounds up to one minute. A macOS job is therefore ~20 minutes of
+# budget per run, so the macOS suite runs as one weekly job instead of two
+# pull-request jobs; the cross-target builds run on main. Everything the gate
+# promises (Linux tests, lint, advisories, end-to-end) still runs on every
+# pull request.
 
 on:
   push:
     branches: [main]
+    # A documentation-only merge cannot change the binary.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "AGENTS.md"
+      - ".agents/**"
   pull_request:
+  schedule:
+    # Monday 04:43 UTC: the macOS test and end-to-end sweep.
+    - cron: "43 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,14 +38,13 @@ concurrency:
 jobs:
   test:
     name: Test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: Linux
             runner: blacksmith-2vcpu-ubuntu-2404
-          - os: macOS
-            runner: blacksmith-6vcpu-macos-26
           - os: Windows
             runner: blacksmith-2vcpu-windows-2025
     runs-on: ${{ matrix.runner }}
@@ -39,9 +57,29 @@ jobs:
       - name: Test the workspace
         run: cargo test --workspace --locked
 
+  macos:
+    name: Test and end-to-end (macOS)
+    # One job rather than two: each job bills at least one minute at the 20x
+    # macOS weight, so the second job doubles the weekly cost for no gate.
+    # A manual dispatch runs it too, for a macOS check on demand.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-6vcpu-macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+      - name: Test the workspace
+        run: cargo test --workspace --locked
+      - name: Run against the pinned sops and age
+        run: mise run e2e
+
   lint:
     name: Lint, docs, and the tree guard
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # A push to main repeats checks the pull request already passed.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
@@ -73,6 +111,7 @@ jobs:
 
   supply-chain:
     name: Advisories, licenses, bans
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -89,16 +128,10 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   e2e:
-    name: End-to-end (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: Linux
-            runner: blacksmith-2vcpu-ubuntu-2404
-          - os: macOS
-            runner: blacksmith-6vcpu-macos-26
-    runs-on: ${{ matrix.runner }}
+    name: End-to-end (Linux)
+    # The pull request is the gate; a merge repeats nothing.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
@@ -110,7 +143,8 @@ jobs:
 
   packages:
     name: Package metadata
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
@@ -142,6 +176,7 @@ jobs:
 
   msrv:
     name: MSRV (1.89)
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
@@ -153,17 +188,32 @@ jobs:
         run: cargo check --workspace --all-targets --locked
 
   portability:
-    name: Supported targets
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    name: Portability (no keyring)
+    # The arm that explains a missing keyring backend is compiled and tested on
+    # the pull request; the cross-target builds move to main (see cross-targets).
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
       - name: Build without the keyring backend
-        # Compiles the arm that explains a missing backend, and runs its test,
-        # so the optional-feature path cannot rot.
         run: |
           cargo check --workspace --all-targets --no-default-features --locked
           cargo test -p lockset-tools --no-default-features --locked
+
+  cross-targets:
+    name: Supported targets
+    # Cross-compiling the same code for three targets is the cheapest place to
+    # catch a platform arm that only fails on a foreign target. It runs after
+    # the merge instead of on every pull request.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
       - name: Build for Windows
         run: |
           rustup target add x86_64-pc-windows-gnu

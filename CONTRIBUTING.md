@@ -111,5 +111,6 @@ an `APM_PAT` secret with read access to `Yazee-Me/Playbook`.
 the next `CHANGELOG.md` section from `Unreleased`, commits, tags
 `v<version>`, and pushes. The tag drives the cargo-dist release, the container
 image, and the action's install. Keep the `Unreleased` section accurate: it is
-the release body, and CI fails if a version's notes do not document the breaking
-change.
+the release body. The identity and sops rename guarantee is pinned to the
+`0.1.0` notes, which CI keeps intact; later releases are additive and do not
+repeat the breaking-change section.

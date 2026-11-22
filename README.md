@@ -138,10 +138,12 @@ Beyond the gate, the suite pins the behavior that matters:
   CI on every parser change and nightly (`mise run fuzz` locally).
 - `.github/dependabot.yml` opens grouped cargo and GitHub Actions updates.
 
-CI runs the same commands: the test matrix covers Linux, macOS, and Windows
-with `--locked`, a lint job runs formatting, clippy, and docs, a supply-chain
-job runs `cargo deny check` and `cargo audit`, and the end-to-end job runs
-`mise run e2e` on Linux and macOS with the pinned `sops`/`age`. The e2e job
+CI runs the same commands. Every pull request runs the workspace tests on Linux
+and Windows with `--locked`, formatting, clippy, and docs, `cargo deny check`
+and `cargo audit`, and `mise run e2e` on Linux with the pinned `sops`/`age`.
+The macOS suite (the workspace tests and the same end-to-end run) runs weekly,
+the cross-target builds run on `main`, and neither runs on a pull request,
+because a macOS job bills at 20 times a Linux minute. The e2e job
 fails loudly when `sops` is missing or older than 3.13 (the version the
 preflight requires), and `deny.toml`/`.cargo/audit.toml` record the one
 transitive advisory with no fixed upgrade (a P-256 timing issue in `age`'s
@@ -205,9 +207,9 @@ paths work on all three:
   identity files, SSH recipients (`ssh-ed25519 …`), PGP recipients, and
   KMS/GCP/Azure/Vault rules (those rules parse and are reported per rule; only
   `grant`/`revoke` on them refuse).
-- **CI.** The portability job builds without the keyring backend and checks the
-  Windows, Linux, and macOS targets; the main matrix runs the whole test suite
-  on Linux, macOS, and Windows.
+- **CI.** The portability job builds without the keyring backend on every pull
+  request; the cross-target job checks the Windows, Linux, and macOS targets on
+  `main`, and the macOS workspace tests and end-to-end suite run weekly.
 
 ## Configuration
 
@@ -592,9 +594,10 @@ publishes a GitHub release.
 Every archive ships with `<archive>.sha256`, the release carries a combined
 `SHA256SUMS`, and each artifact has a GitHub Artifact Attestation (SLSA
 provenance) that `gh attestation verify <file> --repo Yazee-Me/Lockset` checks.
-The release body is the matching `CHANGELOG.md` section, so the breaking
-changes — today the identity and sops rename — are on the release page; CI
-fails if that section is missing them.
+The release body is the matching `CHANGELOG.md` section. The identity and sops
+rename is documented in the v0.1.0 release notes, and CI keeps that section
+intact: later releases are additive and do not repeat the breaking-change
+section.
 
 Install paths, all verified against the published checksums:
 
@@ -643,8 +646,10 @@ does not configure it. To enable it later, add `homebrew` to `installers` and
 
 **Verification on clean runners.** After the release is published,
 `.github/workflows/release-assets.yml` re-checks every published checksum,
-unpacks the archives, and runs `lockset --version` and `--help` on fresh Linux,
-macOS, and Windows runners.
+unpacks the archives, and runs `lockset --version` and `--help` on fresh Linux
+and Windows runners. The macOS binary is built on macOS and its runtime is
+covered by the weekly macOS CI job; the runner matrix omits macOS because one
+macOS job costs as much as 20 Linux minutes (LS-54).
 
 Locally, with `dist` installed (`cargo install cargo-dist` or the installer
 script above):
@@ -684,9 +689,10 @@ cargo release patch --execute    # or minor/major: bumps, tags v<version>, pushe
 
 That opens the next `CHANGELOG.md` section from `Unreleased` and tags
 `v<version>`, which starts the cargo-dist release, the container image, and the
-action's install. The `Unreleased` section is the contract for those notes: keep
-the breaking-change summary at its top (CI fails when a version's section lacks
-it).
+action's install. The `Unreleased` section is the release body: keep it
+accurate. The identity and sops rename guarantee is pinned to the v0.1.0 release
+notes, which CI keeps intact; a later version's notes are not required to carry
+a breaking-change section.
 
 ## Signing
 

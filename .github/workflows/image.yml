@@ -8,6 +8,10 @@ on:
   push:
     tags: ["v*"]
   pull_request:
+    # The image definition and the dependency graph; a source change is already
+    # compiled by the workspace tests, and the Dockerfile copies the whole
+    # workspace. Building it on every code pull request cost ~98 free-equivalent
+    # minutes a month (LS-54).
     paths:
       - Dockerfile
       - .dockerignore
@@ -15,9 +19,6 @@ on:
       - .github/workflows/image.yml
       - Cargo.toml
       - Cargo.lock
-      - "lockset/**"
-      - "lockset-core/**"
-      - "lockset-tools/**"
   workflow_dispatch:
 
 permissions:
@@ -123,4 +124,21 @@ jobs:
             echo "Pinned: \`$IMAGE@$digest\`"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "$IMAGE@$digest" > image-digest.txt
-          gh release upload "$GITHUB_REF_NAME" image-digest.txt --clobber
+          # The cargo-dist release starts from the same tag and can create the
+          # GitHub release after this job (v0.2.0 lost that race by a minute).
+          # The platform images are already pushed, so wait for the release and
+          # never fail the job afterwards: a rerun of this job attaches the
+          # digest to the existing release without rebuilding images.
+          uploaded=0
+          for _ in $(seq 1 30); do
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              if gh release upload "$GITHUB_REF_NAME" image-digest.txt --clobber; then
+                uploaded=1
+              fi
+              break
+            fi
+            sleep 10
+          done
+          if [ "$uploaded" -ne 1 ]; then
+            echo "::warning::image-digest.txt is not attached to the $GITHUB_REF_NAME release yet; the platform images are already pushed, so rerun this manifest job to attach the digest"
+          fi

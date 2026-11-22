@@ -6,6 +6,16 @@ name: Agent context
 
 on:
   pull_request:
+    # Only a change to the context or the policy can make the check fail; other
+    # pull requests would pay for a job that cannot tell them anything (LS-54).
+    paths:
+      - apm.yml
+      - apm.lock.yaml
+      - apm-policy.yml
+      - AGENTS.md
+      - .agents/**
+      - .apm/**
+      - .github/workflows/agent-context.yml
   workflow_dispatch:
 
 permissions:

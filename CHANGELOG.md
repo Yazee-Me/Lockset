@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Internal
+
+- CI spends its runner minutes on the pull-request gate (LS-54): Linux and
+  Windows tests, lint, advisories, end-to-end, MSRV, packaging, and the
+  no-keyring build still run on every pull request. The macOS test and
+  end-to-end suite moved to one weekly job, the fuzz sweep runs weekly, the
+  cross-target builds run on `main`, the container image builds only when its
+  definition or the dependency graph changes, and release verification no
+  longer starts a macOS runner.
+- The release-notes check is pinned to the `0.1.0` section of `CHANGELOG.md`
+  instead of the current version's notes (LS-50). The image manifest waits up to
+  five minutes for the GitHub release before attaching `image-digest.txt`, and
+  warns instead of failing once the platform images are pushed, so a rerun
+  attaches the digest without rebuilding.
+
 ## 0.2.0 - 2026-11-21
 
 ### Added

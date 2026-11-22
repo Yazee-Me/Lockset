@@ -81,14 +81,17 @@ jobs:
   verify:
     name: verify on ${{ matrix.os }}
     needs: extras
+    # No macOS runner here: one macOS job costs about 100 free-equivalent
+    # minutes per release at the 20x weight, and the weekly Test and end-to-end
+    # (macOS) gate in ci.yml already runs the code on macOS. Linux still
+    # checksum-verifies every archive, including the macOS ones, and unpacking
+    # proves the archives are well formed.
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: Linux
             runner: blacksmith-2vcpu-ubuntu-2404
-          - os: macOS
-            runner: blacksmith-6vcpu-macos-26
           - os: Windows
             runner: blacksmith-2vcpu-windows-2025
     runs-on: ${{ matrix.runner }}
